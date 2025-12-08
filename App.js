@@ -11,12 +11,12 @@ import {
 // Lütfen Firebase konsolundan aldığınız bilgileri buraya giriniz.
 // Bu bilgiler olmadan uygulama "Demo Modu"nda (sadece sizin tarayıcınızda) çalışır.
 const FIREBASE_CONFIG = {
-  apiKey: "", 
-  authDomain: "",
-  projectId: "",
-  storageBucket: "",
-  messagingSenderId: "",
-  appId: ""
+  apiKey: "AIzaSyBcgbe_NhAfzwUHpuAS0TniHv-FifmxOA8", 
+  authDomain: "kocluk-6868.firebaseapp.com",
+  projectId: "kocluk-6868",
+  storageBucket: "kocluk-6868.firebasestorage.app",
+  messagingSenderId: "172948773174",
+  appId: "1:172948773174:web:4a58aadf83c48d2e187b97"
 };
 
 // Firebase SDK'larını dinamik olarak yükleyeceğiz (sadece config varsa)
