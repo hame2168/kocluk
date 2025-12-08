@@ -6,7 +6,8 @@ import {
   Library, FileText, CheckCircle, Flag, Phone, GraduationCap, History, Star, Archive, AlertTriangle,
   Play, Pause, RotateCcw, Timer, Menu, Database, CloudOff, Cloud
 } from 'lucide-react';
-
+import { initializeApp } from "firebase/app";
+import { getFirestore, collection, addDoc, updateDoc, doc, deleteDoc, onSnapshot, query, setDoc, getDoc } from "firebase/firestore";
 // --- FIREBASE ENTEGRASYONU ---
 // Lütfen Firebase konsolundan aldığınız bilgileri buraya giriniz.
 // Bu bilgiler olmadan uygulama "Demo Modu"nda (sadece sizin tarayıcınızda) çalışır.
@@ -20,8 +21,7 @@ const FIREBASE_CONFIG = {
 };
 
 // Firebase SDK'larını dinamik olarak yükleyeceğiz (sadece config varsa)
-import { initializeApp } from "firebase/app";
-import { getFirestore, collection, addDoc, updateDoc, doc, deleteDoc, onSnapshot, query, setDoc, getDoc } from "firebase/firestore";
+
 
 let db = null;
 let isFirebaseActive = false;
