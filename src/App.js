@@ -166,8 +166,11 @@ const Modal = ({ title, children, onClose }) => {
 };
 
 const DeleteConfirmModal = ({ isOpen, onClose, onConfirm, message = "Bu öğeyi silmek istediğinize emin misiniz? Bu işlem geri alınamaz." }) => {
-  if (!isOpen) return null;
+  // DÜZELTME: Hook çağrısı koşuldan önceye alındı.
   const colors = useThemeColors();
+  
+  if (!isOpen) return null;
+  
   return (
     <Modal title="Silme Onayı" onClose={onClose}>
       <div className={`${colors.textSec} mb-6 text-sm`}>{message}</div>
