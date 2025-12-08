@@ -254,13 +254,13 @@ const DashboardModule = ({ user, students, setStudents, setSelectedStudentId, on
 
 // 1. DERS YÖNETİMİ
 const LessonModule = ({ student, curriculum, setCurriculum, onUpdateStudent, user }) => {
-  if (user.role === 'student') return <div className="text-white text-center mt-20">Bu alana erişim yetkiniz yok.</div>;
+ 
   const [selectedCourseId, setSelectedCourseId] = useState(curriculum[0]?.id || null);
   const [showAddModal, setShowAddModal] = useState(null); 
   const [newItem, setNewItem] = useState({ name: "", parentId: "" }); 
   const [bulkText, setBulkText] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState(null);
-
+ if (user.role === 'student') return <div className="text-white text-center mt-20">Bu alana erişim yetkiniz yok.</div>;
   const selectedCourse = curriculum.find(c => c.id === selectedCourseId);
   const toggleStatus = (topicId, type) => { const currentStatus = student.lessons[topicId] || {}; const newStatus = { ...currentStatus, [type]: !currentStatus[type] }; onUpdateStudent({ ...student, lessons: { ...student.lessons, [topicId]: newStatus } }); };
   
@@ -415,11 +415,11 @@ const GoalsModule = ({ student, onUpdateStudent, user }) => {
 
 // 4. KAYNAKLAR
 const ResourceModule = ({ student, curriculum, onUpdateStudent, user }) => {
-  if (user.role === 'student') return <div className="text-white text-center mt-20">Bu alana erişim yetkiniz yok.</div>;
+ 
   const [selectedCourseId, setSelectedCourseId] = useState(curriculum[0]?.id || null);
   const [showAddModal, setShowAddModal] = useState(false); const [showDetailModal, setShowDetailModal] = useState(null); const [newResource, setNewResource] = useState({ name: '', publisher: '' });
   const [deleteConfirm, setDeleteConfirm] = useState(null);
-  
+   if (user.role === 'student') return <div className="text-white text-center mt-20">Bu alana erişim yetkiniz yok.</div>;
   const selectedCourse = curriculum.find(c => c.id === selectedCourseId);
   const resources = student.resources ? student.resources.filter(r => r.courseId === selectedCourseId) : [];
   const handleAddResource = () => { if(!newResource.name) return; const res = { id: Date.now(), courseId: selectedCourseId, name: newResource.name, publisher: newResource.publisher, progress: 0, notes: '', completedTopics: [] }; onUpdateStudent({ ...student, resources: [...(student.resources || []), res] }); setShowAddModal(false); setNewResource({ name: '', publisher: '' }); };
@@ -474,11 +474,11 @@ const ExamModule = ({ student, onUpdateStudent, user }) => {
 
 // 6. DUYGUDURUM TAKİBİ
 const MoodModule = ({ student, onUpdateStudent, user }) => {
-  if (user.role === 'student') return <div className="text-white text-center mt-20">Bu alana erişim yetkiniz yok.</div>;
+  
   const METRICS_CONFIG = [{ key: 'motivation', label: 'Motivasyon', color: '#3b82f6' }, { key: 'happiness', label: 'Mutluluk', color: '#10b981' }, { key: 'social', label: 'Sosyalleşme', color: '#f59e0b' }, { key: 'examAnxiety', label: 'Sınav Kaygısı', color: '#ef4444' }, { key: 'lessonAnxiety', label: 'Ders Kaygısı', color: '#8b5cf6' }, { key: 'performance', label: 'Performans', color: '#ec4899' }, { key: 'homeworkRate', label: 'Ödev Tamamlama', color: '#06b6d4' }];
   const [editingId, setEditingId] = useState(null); const [formData, setFormData] = useState({ date: new Date().toISOString().split('T')[0], metrics: { motivation: 50, happiness: 50, social: 50, examAnxiety: 50, lessonAnxiety: 50, performance: 50, homeworkRate: 50 } });
   const [deleteConfirm, setDeleteConfirm] = useState(null);
-
+if (user.role === 'student') return <div className="text-white text-center mt-20">Bu alana erişim yetkiniz yok.</div>;
   const handleSave = () => { let newMoods = [...student.moods]; if (editingId) { newMoods = newMoods.map(m => m.id === editingId ? { ...m, date: formData.date, metrics: formData.metrics } : m); } else { newMoods.push({ id: Date.now(), date: formData.date, metrics: formData.metrics }); } onUpdateStudent({ ...student, moods: newMoods }); setEditingId(null); setFormData({ ...formData, date: new Date().toISOString().split('T')[0] }); };
   const handleEdit = (mood) => { setEditingId(mood.id); setFormData({ date: mood.date, metrics: { ...mood.metrics } }); window.scrollTo(0,0); };
   const requestDelete = (e, id) => { e.stopPropagation(); e.preventDefault(); setDeleteConfirm(id); };
@@ -494,13 +494,13 @@ const MoodModule = ({ student, onUpdateStudent, user }) => {
 
 // 7. GÖRÜŞMELER & ÖDEME
 const InterviewModule = ({ student, onUpdateStudent, user }) => {
-  if (user.role === 'student') return <div className="text-white text-center mt-20">Bu alana erişim yetkiniz yok.</div>;
+ 
   const [showModal, setShowModal] = useState(false); const [newInterview, setNewInterview] = useState({ date: new Date().toISOString().split('T')[0], title: "", note: "" });
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const handleAdd = () => { if(!newInterview.note) return; const interview = { id: Date.now(), ...newInterview }; onUpdateStudent({ ...student, interviews: [interview, ...student.interviews] }); setShowModal(false); setNewInterview({ date: new Date().toISOString().split('T')[0], title: "", note: "" }); };
   const requestDelete = (e, id) => { e.stopPropagation(); e.preventDefault(); setDeleteConfirm(id); };
   const confirmDelete = () => { if (deleteConfirm) { const filtered = student.interviews.filter(i => i.id !== deleteConfirm); onUpdateStudent({ ...student, interviews: filtered }); setDeleteConfirm(null); } };
-
+ if (user.role === 'student') return <div className="text-white text-center mt-20">Bu alana erişim yetkiniz yok.</div>;
   return (
     <div className="animate-fade-in space-y-6"><div className="flex justify-between items-center"><h2 className="text-2xl font-bold text-white">Görüşme Kayıtları</h2><Button onClick={() => setShowModal(true)} icon={Plus}>Yeni Görüşme Ekle</Button></div><div className="grid gap-4">{student.interviews.map(interview => (<div key={interview.id} className="bg-slate-900 border border-slate-800 rounded-xl p-6 relative group"><div className="flex justify-between mb-2"><h3 className="font-bold text-white">{interview.title}</h3><div className="flex items-center gap-3"><span className="text-xs text-slate-500">{interview.date}</span><button onClick={(e) => requestDelete(e, interview.id)} className="text-slate-600 hover:text-red-500 p-2"><Trash2 size={16}/></button></div></div><p className="text-slate-400 text-sm whitespace-pre-wrap">{interview.note}</p></div>))}{student.interviews.length === 0 && <div className="text-center text-slate-500 py-10">Henüz kayıt yok.</div>}</div>{showModal && (<Modal title="Yeni Görüşme" onClose={() => setShowModal(false)}><div className="space-y-4"><Input label="Tarih" type="date" value={newInterview.date} onChange={e => setNewInterview({...newInterview, date: e.target.value})} /><Input label="Başlık" value={newInterview.title} onChange={e => setNewInterview({...newInterview, title: e.target.value})} /><textarea className="w-full bg-slate-900 border border-slate-700 p-3 rounded text-white h-32 focus:border-orange-500 outline-none" value={newInterview.note} onChange={e => setNewInterview({...newInterview, note: e.target.value})} placeholder="Notlar..." /><Button onClick={handleAdd}>Kaydet</Button></div></Modal>)}
     <DeleteConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={confirmDelete} />
@@ -509,13 +509,13 @@ const InterviewModule = ({ student, onUpdateStudent, user }) => {
 };
 
 const PaymentModule = ({ student, onUpdateStudent, user }) => {
-  if (user.role === 'student') return <div className="text-white text-center mt-20">Bu alana erişim yetkiniz yok.</div>;
+ 
   const [showModal, setShowModal] = useState(false); const [newPayment, setNewPayment] = useState({ date: new Date().toISOString().split('T')[0], amount: "", description: "", method: "Nakit" });
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const handleAdd = () => { if (!newPayment.amount) return; const payment = { id: Date.now(), ...newPayment }; onUpdateStudent({ ...student, payments: [payment, ...student.payments] }); setShowModal(false); setNewPayment({ date: new Date().toISOString().split('T')[0], amount: "", description: "", method: "Nakit" }); };
   const requestDelete = (e, id) => { e.stopPropagation(); e.preventDefault(); setDeleteConfirm(id); };
   const confirmDelete = () => { if (deleteConfirm) { const filtered = student.payments.filter(p => p.id !== deleteConfirm); onUpdateStudent({ ...student, payments: filtered }); setDeleteConfirm(null); } };
-  
+   if (user.role === 'student') return <div className="text-white text-center mt-20">Bu alana erişim yetkiniz yok.</div>;
   const totalPaid = student.payments.reduce((acc, curr) => acc + Number(curr.amount), 0);
   return (
     <div className="animate-fade-in space-y-6"><div className="flex justify-between items-center"><h2 className="text-2xl font-bold text-white">Ödeme Takibi</h2><Button onClick={() => setShowModal(true)} icon={Plus}>Ödeme Ekle</Button></div><div className="grid grid-cols-1 md:grid-cols-3 gap-6"><Card className="bg-slate-900 border-l-4 border-l-emerald-500"><div className="text-slate-400 text-xs uppercase font-bold mb-2">Toplam Tahsilat</div><div className="text-3xl font-bold text-white">{totalPaid.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}</div></Card><Card className="bg-slate-900 border-l-4 border-l-blue-500"><div className="text-slate-400 text-xs uppercase font-bold mb-2">Son İşlem</div><div className="text-xl font-bold text-white">{student.payments[0]?.date || '-'}</div></Card></div><Card title="Ödeme Geçmişi"><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-800 text-slate-200"><tr><th className="p-4">Tarih</th><th className="p-4">Açıklama</th><th className="p-4">Yöntem</th><th className="p-4 text-right">Tutar</th><th className="p-4 text-right">İşlem</th></tr></thead><tbody className="divide-y divide-slate-800 text-slate-300">{student.payments.map(p => (<tr key={p.id} className="hover:bg-slate-800/30"><td className="p-4">{p.date}</td><td className="p-4 font-medium text-white">{p.description}</td><td className="p-4"><span className="bg-slate-800 px-2 py-1 rounded text-xs">{p.method}</span></td><td className="p-4 text-right font-bold text-emerald-400">{Number(p.amount).toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}</td><td className="p-4 text-right"><button onClick={(e) => requestDelete(e, p.id)} className="text-slate-500 hover:text-red-500 p-2"><Trash2 size={16}/></button></td></tr>))}{student.payments.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-slate-500">Ödeme kaydı bulunamadı.</td></tr>}</tbody></table></div></Card>{showModal && (<Modal title="Yeni Ödeme Alındısı" onClose={() => setShowModal(false)}><div className="space-y-4"><Input label="Tarih" type="date" value={newPayment.date} onChange={e => setNewPayment({...newPayment, date: e.target.value})} /><Input label="Tutar (TL)" type="number" value={newPayment.amount} onChange={e => setNewPayment({...newPayment, amount: e.target.value})} /><Input label="Açıklama" placeholder="Örn: Kasım 2025 Koçluk Ücreti" value={newPayment.description} onChange={e => setNewPayment({...newPayment, description: e.target.value})} /><div><label className="block text-xs font-medium text-slate-400 mb-2 uppercase">Ödeme Yöntemi</label><select className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-orange-500 outline-none" value={newPayment.method} onChange={e => setNewPayment({...newPayment, method: e.target.value})}><option>Nakit</option><option>Havale/EFT</option><option>Kredi Kartı</option></select></div><Button onClick={handleAdd} className="w-full mt-4">Kaydet</Button></div></Modal>)}
