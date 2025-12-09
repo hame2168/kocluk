@@ -42,30 +42,32 @@ const useTheme = () => {
   return context;
 };
 
-// Renk paleti yardımcı fonksiyonu (GÜNCELLENDİ: Aydınlık tema kontrastı artırıldı)
+// Renk paleti yardımcı fonksiyonu
 const useThemeColors = () => {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
   return {
     isDark,
-    // Aydınlık modda arka planı hafif gri yaptık (slate-100), kartları beyaz yaptık.
     bgMain: isDark ? 'bg-slate-950' : 'bg-slate-100',
     bgCard: isDark ? 'bg-slate-900' : 'bg-white',
     bgCardTransparent: isDark ? 'bg-slate-900/50' : 'bg-white/80',
     text: isDark ? 'text-white' : 'text-slate-900',
     textSec: isDark ? 'text-slate-400' : 'text-slate-500',
-    border: isDark ? 'border-slate-800' : 'border-slate-300', // Kenarlıkları koyulaştırdık
+    border: isDark ? 'border-slate-800' : 'border-slate-300', 
     inputBg: isDark ? 'bg-slate-900' : 'bg-slate-50',
     inputBorder: isDark ? 'border-slate-700' : 'border-slate-300',
     hoverBg: isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-200',
     tableHeader: isDark ? 'bg-slate-800 text-slate-300' : 'bg-slate-200 text-slate-700',
     divider: isDark ? 'divide-slate-800' : 'divide-slate-200',
-    shadow: isDark ? 'shadow-none' : 'shadow-sm', // Aydınlık modda hafif gölge
+    shadow: isDark ? 'shadow-none' : 'shadow-sm',
   };
 };
 
 // --- VERİ MODELİ VE SABİTLER ---
 
+// NOT: Super Admin ID'sini Firebase'den gelen gerçek ID ile eşleşmesi için 
+// veritabanındaki ilk kaydın ID'sine dikkat etmek gerekir. 
+// Ancak başlangıç için hardcoded bir değer demo modunda kullanılır.
 const SUPER_ADMIN_ID = "super_admin_hmk";
 
 const EXAM_TYPES = {
@@ -96,7 +98,6 @@ const INITIAL_CURRICULUM = [
   { id: 'geo-tyt', name: 'Geometri', units: [{ id: 'g1', name: 'Üçgenler', topics: ['Doğruda Açı', 'Üçgende Açı'] }] }
 ];
 
-// GÜNCELLENDİ: Başlangıç yöneticisi eklendi.
 const INITIAL_ADMINS = [
   { id: SUPER_ADMIN_ID, name: "Hamza Metehan Kılıç", username: "admin", password: "123", role: "superadmin" }
 ];
@@ -170,7 +171,6 @@ const Modal = ({ title, children, onClose }) => {
   );
 };
 
-// YENİ: Profil Düzenleme Modalı
 const ProfileSettingsModal = ({ user, onClose, onUpdate }) => {
   const [form, setForm] = useState({ name: user.name, username: user.username || '', password: user.password || '' });
   const colors = useThemeColors();
@@ -242,18 +242,57 @@ const AdminManagementModule = ({ admins, setAdmins, user, allStudents, onInspect
   if (user.role !== 'superadmin') return <div className={`${colors.text} text-center`}>Bu sayfaya erişim yetkiniz yok.</div>;
 
   const handleEdit = (admin) => { setEditingAdmin(admin); setForm({ name: admin.name, username: admin.username, password: admin.password }); setShowModal(true); };
+  
   const handleSave = async () => {
     if (!form.name || !form.username || !form.password) return alert("Tüm alanları doldurunuz.");
+    
+    // YENİ: Firebase ID'leri ile çalışmak için id yönetimi güncellendi.
     if (editingAdmin) {
        const updatedAdmin = { ...editingAdmin, ...form };
-       if (isFirebaseActive) { try { const adminRef = doc(db, "admins", editingAdmin.id); const { id, ...data } = updatedAdmin; await updateDoc(adminRef, data); } catch(e) { console.error(e); alert("Güncelleme hatası"); } } else { setAdmins(admins.map(a => a.id === editingAdmin.id ? updatedAdmin : a)); }
+       if (isFirebaseActive) { 
+           try { 
+               // Burada ID olarak document ID kullanılıyor
+               const adminRef = doc(db, "admins", editingAdmin.id); 
+               const { id, ...data } = updatedAdmin; 
+               await updateDoc(adminRef, data); 
+            } catch(e) { 
+                console.error(e); 
+                alert("Güncelleme hatası: " + e.message); 
+            } 
+       } else { 
+           setAdmins(admins.map(a => a.id === editingAdmin.id ? updatedAdmin : a)); 
+       }
     } else {
-        const newAdmin = { id: Date.now().toString(), name: form.name, username: form.username, password: form.password, role: 'admin' };
-        if (isFirebaseActive) { try { await addDoc(collection(db, "admins"), newAdmin); } catch(e) { console.error(e); alert("Kayıt hatası"); } } else { setAdmins([...admins, newAdmin]); }
+        const newAdmin = { name: form.name, username: form.username, password: form.password, role: 'admin' };
+        if (isFirebaseActive) { 
+            try { 
+                await addDoc(collection(db, "admins"), newAdmin); 
+            } catch(e) { 
+                console.error(e); 
+                alert("Kayıt hatası: " + e.message); 
+            } 
+        } else { 
+            setAdmins([...admins, { id: Date.now().toString(), ...newAdmin }]); 
+        }
     }
     setShowModal(false); setForm({ name: '', username: '', password: '' }); setEditingAdmin(null);
   };
-  const handleDelete = async (id) => { if(isFirebaseActive) { await deleteDoc(doc(db, "admins", id)); } else { setAdmins(admins.filter(a => a.id !== id)); } setDeleteConfirm(null); };
+
+  const handleDelete = async (id) => { 
+      if(isFirebaseActive) { 
+          // YENİ: Firebase silme işlemi için doğrudan doküman ID'sini kullanıyoruz.
+          // onSnapshot kısmında doc.id'yi nesneye 'id' olarak atadığımız için buradaki 'id' aslında Firebase Key'dir.
+          try {
+              await deleteDoc(doc(db, "admins", id));
+          } catch(e) {
+              console.error("Silme hatası:", e);
+              alert("Silme başarısız oldu: " + e.message);
+          }
+      } else { 
+          setAdmins(admins.filter(a => a.id !== id)); 
+      } 
+      setDeleteConfirm(null); 
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -319,7 +358,21 @@ const DashboardModule = ({ user, students, setStudents, setSelectedStudentId, on
   const handleSave = async () => {
     if(!form.name || !form.username) return alert("İsim ve kullanıcı adı zorunludur.");
     if (editingId) { const student = students.find(s => s.id === editingId); onUpdateStudent({ ...student, ...form }); setEditingId(null); } 
-    else { const newStudent = { ...form, teacherId: user.id, exams: [], moods: [], lessons: {}, interviews: [], payments: [], teacherNotes: [], assignments: [], pastWeeks: [], goals: [], resources: [], stats: { totalSolved: 0, monthlySolved: 0, xp: 0, level: 1 } }; if (isFirebaseActive) { try { await addDoc(collection(db, "students"), newStudent); } catch(e) { console.error(e); alert("Kayıt hatası"); } } else { setStudents([...students, { id: Date.now(), ...newStudent }]); } }
+    else { 
+        // YENİ: Öğrenci oluştururken teacherId olarak şu anki kullanıcının (Admin) ID'si atanır.
+        // Firebase kullanılıyorsa user.id aslında Firebase Document ID'sidir.
+        const newStudent = { ...form, teacherId: user.id, exams: [], moods: [], lessons: {}, interviews: [], payments: [], teacherNotes: [], assignments: [], pastWeeks: [], goals: [], resources: [], stats: { totalSolved: 0, monthlySolved: 0, xp: 0, level: 1 } }; 
+        if (isFirebaseActive) { 
+            try { 
+                await addDoc(collection(db, "students"), newStudent); 
+            } catch(e) { 
+                console.error(e); 
+                alert("Kayıt hatası: " + e.message); 
+            } 
+        } else { 
+            setStudents([...students, { id: Date.now(), ...newStudent }]); 
+        } 
+    }
     setShowModal(false); setForm({ name: '', grade: '', target: '', phone: '', school: '', username: '', password: '' });
   };
   
@@ -358,24 +411,82 @@ const DashboardModule = ({ user, students, setStudents, setSelectedStudentId, on
 };
 
 // 1. DERS YÖNETİMİ
+// GÜNCELLENDİ: Global 'curriculum' değişkenini değil, öğrenciye özel 'student.curriculum' kullanır.
 const LessonModule = ({ student, curriculum, setCurriculum, onUpdateStudent, user }) => {
-  const [selectedCourseId, setSelectedCourseId] = useState(curriculum[0]?.id || null);
+  // Eğer öğrencinin kendi özelleştirilmiş müfredatı varsa onu kullan, yoksa genel müfredatı kullan.
+  const activeCurriculum = student.curriculum || curriculum;
+  
+  const [selectedCourseId, setSelectedCourseId] = useState(activeCurriculum[0]?.id || null);
   const [showAddModal, setShowAddModal] = useState(null); 
   const [newItem, setNewItem] = useState({ name: "", parentId: "" }); 
   const [bulkText, setBulkText] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const colors = useThemeColors();
- if (user.role === 'student') return <div className={`${colors.text} text-center mt-20`}>Bu alana erişim yetkiniz yok.</div>;
-  const selectedCourse = curriculum.find(c => c.id === selectedCourseId);
+  
+  if (user.role === 'student') return <div className={`${colors.text} text-center mt-20`}>Bu alana erişim yetkiniz yok.</div>;
+  
+  const selectedCourse = activeCurriculum.find(c => c.id === selectedCourseId);
+  
   const toggleStatus = (topicId, type) => { const currentStatus = student.lessons[topicId] || {}; const newStatus = { ...currentStatus, [type]: !currentStatus[type] }; onUpdateStudent({ ...student, lessons: { ...student.lessons, [topicId]: newStatus } }); };
-  const handleAddItem = () => { if (showAddModal === 'course') { if(!newItem.name) return; const newCourse = { id: Date.now().toString(), name: newItem.name, units: [] }; setCurriculum([...curriculum, newCourse]); setSelectedCourseId(newCourse.id); } else if (showAddModal === 'unit' || showAddModal === 'topic') { const names = bulkText ? bulkText.split('\n').filter(n => n.trim()) : (newItem.name ? [newItem.name] : []); if(names.length === 0) return; const updatedCurriculum = curriculum.map(c => { if (c.id === selectedCourseId) { if (showAddModal === 'unit') { const newUnits = names.map(name => ({ id: Math.random().toString(36).substr(2, 9), name, topics: [] })); return { ...c, units: [...c.units, ...newUnits] }; } else { return { ...c, units: c.units.map(u => u.id === newItem.parentId ? { ...u, topics: [...u.topics, ...names] } : u) }; } } return c; }); setCurriculum(updatedCurriculum); } setShowAddModal(null); setNewItem({ name: "", parentId: "" }); setBulkText(""); };
+  
+  // YENİ: Ders ekleme mantığı artık sadece ilgili öğrencinin müfredatını günceller.
+  const handleAddItem = () => { 
+      let updatedCurriculum = [...activeCurriculum];
+
+      if (showAddModal === 'course') { 
+          if(!newItem.name) return; 
+          const newCourse = { id: Date.now().toString(), name: newItem.name, units: [] }; 
+          updatedCurriculum = [...updatedCurriculum, newCourse];
+          setSelectedCourseId(newCourse.id); 
+      } else if (showAddModal === 'unit' || showAddModal === 'topic') { 
+          const names = bulkText ? bulkText.split('\n').filter(n => n.trim()) : (newItem.name ? [newItem.name] : []); 
+          if(names.length === 0) return; 
+          
+          updatedCurriculum = updatedCurriculum.map(c => { 
+              if (c.id === selectedCourseId) { 
+                  if (showAddModal === 'unit') { 
+                      const newUnits = names.map(name => ({ id: Math.random().toString(36).substr(2, 9), name, topics: [] })); 
+                      return { ...c, units: [...c.units, ...newUnits] }; 
+                  } else { 
+                      return { ...c, units: c.units.map(u => u.id === newItem.parentId ? { ...u, topics: [...u.topics, ...names] } : u) }; 
+                  } 
+              } 
+              return c; 
+          }); 
+      }
+      
+      // Sadece bu öğrenci için müfredatı güncelle
+      onUpdateStudent({ ...student, curriculum: updatedCurriculum });
+      
+      setShowAddModal(null); setNewItem({ name: "", parentId: "" }); setBulkText(""); 
+  };
+
   const requestDelete = (e, type, id, parentId = null) => { e.stopPropagation(); e.preventDefault(); setDeleteConfirm({ type, id, parentId }); };
-  const confirmDelete = () => { if (!deleteConfirm) return; const { type, id, parentId } = deleteConfirm; if (type === 'course') { const newCurriculum = curriculum.filter(c => c.id !== id); setCurriculum(newCurriculum); if(selectedCourseId === id) setSelectedCourseId(newCurriculum[0]?.id || null); } else if (type === 'unit') { const updatedCurriculum = curriculum.map(c => c.id === selectedCourseId ? { ...c, units: c.units.filter(u => u.id !== id) } : c); setCurriculum(updatedCurriculum); } else if (type === 'topic') { const updatedCurriculum = curriculum.map(c => c.id === selectedCourseId ? { ...c, units: c.units.map(u => u.id === parentId ? { ...u, topics: u.topics.filter(t => t !== id) } : u) } : c); setCurriculum(updatedCurriculum); } setDeleteConfirm(null); };
+  
+  const confirmDelete = () => { 
+      if (!deleteConfirm) return; 
+      const { type, id, parentId } = deleteConfirm; 
+      let updatedCurriculum = [...activeCurriculum];
+
+      if (type === 'course') { 
+          updatedCurriculum = updatedCurriculum.filter(c => c.id !== id); 
+          if(selectedCourseId === id) setSelectedCourseId(updatedCurriculum[0]?.id || null); 
+      } else if (type === 'unit') { 
+          updatedCurriculum = updatedCurriculum.map(c => c.id === selectedCourseId ? { ...c, units: c.units.filter(u => u.id !== id) } : c); 
+      } else if (type === 'topic') { 
+          updatedCurriculum = updatedCurriculum.map(c => c.id === selectedCourseId ? { ...c, units: c.units.map(u => u.id === parentId ? { ...u, topics: u.topics.filter(t => t !== id) } : u) } : c); 
+      } 
+      
+      // Sadece bu öğrenci için müfredatı güncelle
+      onUpdateStudent({ ...student, curriculum: updatedCurriculum });
+      setDeleteConfirm(null); 
+  };
+
   const LABELS = [{ id: 'konu', label: 'Konu', color: 'bg-emerald-500' }, { id: 'soru', label: 'Soru', color: 'bg-blue-500' }, { id: 't1', label: '1. Tekrar', color: 'bg-purple-500' }, { id: 't2', label: '2. Tekrar', color: 'bg-pink-500' }, { id: 't3', label: '3. Tekrar', color: 'bg-orange-500' }];
   
   return (
     <div className="flex flex-col md:flex-row gap-6 h-auto md:h-[calc(100vh-140px)] animate-fade-in">
-        <div className="w-full md:w-1/4 flex flex-col gap-2 max-h-60 md:max-h-full overflow-y-auto pr-2 custom-scrollbar"><div className="flex justify-between items-center mb-2"><h3 className="text-orange-500 font-bold">Dersler</h3><Button size="small" icon={Plus} onClick={() => setShowAddModal('course')} /></div>{curriculum.map(c => (<div key={c.id} className="flex gap-2"><button onClick={() => setSelectedCourseId(c.id)} className={`flex-1 p-3 rounded-lg text-left transition-all ${selectedCourseId === c.id ? `bg-slate-800 border-orange-500 text-white border` : `${colors.bgCard} ${colors.border} ${colors.textSec}`}`}>{c.name}</button><button onClick={(e) => requestDelete(e, 'course', c.id)} className={`p-3 ${colors.bgCard} ${colors.border} border rounded-lg text-slate-500 hover:text-red-500 hover:border-red-500/50 group`}><Trash2 size={16} className="group-hover:text-red-500"/></button></div>))}</div>
+        <div className="w-full md:w-1/4 flex flex-col gap-2 max-h-60 md:max-h-full overflow-y-auto pr-2 custom-scrollbar"><div className="flex justify-between items-center mb-2"><h3 className="text-orange-500 font-bold">Dersler</h3><Button size="small" icon={Plus} onClick={() => setShowAddModal('course')} /></div>{activeCurriculum.map(c => (<div key={c.id} className="flex gap-2"><button onClick={() => setSelectedCourseId(c.id)} className={`flex-1 p-3 rounded-lg text-left transition-all ${selectedCourseId === c.id ? `bg-slate-800 border-orange-500 text-white border` : `${colors.bgCard} ${colors.border} ${colors.textSec}`}`}>{c.name}</button><button onClick={(e) => requestDelete(e, 'course', c.id)} className={`p-3 ${colors.bgCard} ${colors.border} border rounded-lg text-slate-500 hover:text-red-500 hover:border-red-500/50 group`}><Trash2 size={16} className="group-hover:text-red-500"/></button></div>))}</div>
         <div className={`flex-1 ${colors.bgCardTransparent} border ${colors.border} rounded-xl p-6 overflow-y-auto custom-scrollbar`}>{selectedCourse ? (<><div className={`flex flex-col md:flex-row justify-between items-start md:items-center mb-6 pb-4 border-b ${colors.border} gap-4`}><h2 className={`text-xl font-bold ${colors.text}`}>{selectedCourse.name}</h2><div className="flex gap-3"><Button size="small" variant="secondary" icon={Plus} onClick={() => setShowAddModal('unit')}>Ünite Ekle</Button><Button size="small" variant="secondary" icon={Plus} onClick={() => { setNewItem({...newItem, parentId: selectedCourse.units[0]?.id}); setShowAddModal('topic'); }}>Konu Ekle</Button></div></div>{selectedCourse.units.map(unit => (<div key={unit.id} className={`mb-6 ${colors.bgCard} border ${colors.border} rounded-lg overflow-hidden ${colors.shadow}`}><div className={`${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} p-3 flex justify-between items-center`}><h4 className="text-orange-500 font-bold">{unit.name}</h4><button onClick={(e) => requestDelete(e, 'unit', unit.id)} className="text-slate-500 hover:text-red-500 p-2"><Trash2 size={14}/></button></div><div className={`divide-y ${colors.divider}`}>{unit.topics.map((topic, idx) => { const key = `${selectedCourse.id}-${unit.id}-${idx}`; const status = student.lessons[key] || {}; return (<div key={idx} className={`flex flex-col md:flex-row justify-between items-start md:items-center p-3 ${colors.hoverBg} transition-colors gap-2`}><span className={`${colors.text} text-sm font-medium`}>{topic}</span><div className="flex items-center gap-4 w-full md:w-auto justify-between md:justify-end"><div className="flex gap-3 mr-4">{LABELS.map(lbl => (<div key={lbl.id} className="flex flex-col items-center gap-1 cursor-pointer group" onClick={() => toggleStatus(key, lbl.id)}><div className={`w-5 h-5 rounded-full border border-slate-600 flex items-center justify-center transition-all ${status[lbl.id] ? `${lbl.color} border-transparent` : `hover:border-slate-400 ${colors.isDark ? 'bg-slate-800' : 'bg-white'}`}`}>{status[lbl.id] && <Check size={10} className="text-white"/>}</div><span className={`text-[9px] ${colors.textSec} font-medium whitespace-nowrap group-hover:${colors.text} transition-colors`}>{lbl.label}</span></div>))}</div><button onClick={(e) => requestDelete(e, 'topic', topic, unit.id)} className="text-slate-600 hover:text-red-500 p-2"><Trash2 size={14}/></button></div></div>) })}</div></div>))}</>) : <div className={`${colors.textSec} text-center py-20`}>Ders seçiniz veya ekleyiniz.</div>}</div>
         {showAddModal && (<Modal title={showAddModal === 'course' ? 'Yeni Ders' : showAddModal === 'unit' ? 'Yeni Ünite' : 'Yeni Konu'} onClose={() => setShowAddModal(null)}><div className="space-y-4">{showAddModal === 'topic' && (<div><label className={`block text-sm ${colors.textSec} mb-1`}>Hangi Üniteye?</label><select className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg p-3 ${colors.text}`} value={newItem.parentId} onChange={e => setNewItem({...newItem, parentId: e.target.value})}><option value="">Seçiniz</option>{selectedCourse?.units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div>)}{showAddModal === 'course' ? (<Input label="Ders Adı" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} />) : (<div><label className={`block text-xs font-medium ${colors.textSec} mb-2 uppercase`}>{showAddModal === 'unit' ? 'Ünite İsimleri' : 'Konu İsimleri'} (Her satıra bir tane)</label><textarea className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg p-3 ${colors.text} h-32 focus:border-orange-500 outline-none`} value={bulkText} onChange={e => setBulkText(e.target.value)}></textarea></div>)}<Button onClick={handleAddItem} className="w-full mt-4">Kaydet</Button></div></Modal>)}
         <DeleteConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={confirmDelete} />
@@ -385,12 +496,15 @@ const LessonModule = ({ student, curriculum, setCurriculum, onUpdateStudent, use
 
 // 2. HAFTALIK PROGRAM
 const ScheduleModule = ({ student, curriculum, onUpdateStudent, user }) => {
+  // YENİ: Öğrencinin özelleştirilmiş müfredatını kullan
+  const activeCurriculum = student.curriculum || curriculum;
+  
   const [form, setForm] = useState({ day: 'Mon', courseId: '', unitId: '', topic: '', type: 'soru', count: '', source: '' });
   const [editingId, setEditingId] = useState(null); 
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const colors = useThemeColors();
 
-  const selectedCourse = curriculum.find(c => c.id === form.courseId);
+  const selectedCourse = activeCurriculum.find(c => c.id === form.courseId);
   const selectedUnit = selectedCourse?.units.find(u => u.id === form.unitId);
   const availableResources = student.resources ? student.resources.filter(r => r.courseId === form.courseId) : [];
   const assignments = student.assignments || [];
@@ -403,7 +517,7 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user }) => {
   const allTimeSolved = (student.stats?.totalSolved || 0) + weeklySolvedQuestions;
   
   const handleAssign = () => { if(!form.courseId || !form.topic) return alert("Lütfen ders ve konu seçiniz."); if(form.type === 'soru' && !form.count) return alert("Soru sayısı giriniz."); if (editingId) { const updatedAssignments = assignments.map(a => a.id === editingId ? { ...a, ...form, subject: selectedCourse.name } : a); onUpdateStudent({ ...student, assignments: updatedAssignments }); setEditingId(null); } else { const newAssignment = { id: Date.now(), status: 'pending', subject: selectedCourse.name, ...form }; onUpdateStudent({ ...student, assignments: [...assignments, newAssignment] }); } setForm(prev => ({ ...prev, count: '', source: '', unitId: '', topic: '' })); };
-  const handleEdit = (task) => { const course = curriculum.find(c => c.name === task.subject); setForm({ day: task.day, courseId: course ? course.id : '', unitId: task.unitId || '', topic: task.topic, type: task.type, count: task.count, source: task.source || '' }); setEditingId(task.id); window.scrollTo(0,0); };
+  const handleEdit = (task) => { const course = activeCurriculum.find(c => c.name === task.subject); setForm({ day: task.day, courseId: course ? course.id : '', unitId: task.unitId || '', topic: task.topic, type: task.type, count: task.count, source: task.source || '' }); setEditingId(task.id); window.scrollTo(0,0); };
   const handleCancelEdit = () => { setEditingId(null); setForm(prev => ({ ...prev, count: '', source: '', unitId: '', topic: '' })); };
   const toggleTaskStatus = (id) => { const updated = assignments.map(a => a.id === id ? { ...a, status: a.status === 'completed' ? 'pending' : 'completed' } : a); let newStats = { ...student.stats }; const task = assignments.find(a => a.id === id); if (task && task.status !== 'completed') { newStats.xp = (newStats.xp || 0) + 50; newStats.level = Math.floor(newStats.xp / 1000) + 1; } onUpdateStudent({ ...student, assignments: updated, stats: newStats }); };
   const requestDelete = (e, id) => { e.stopPropagation(); e.preventDefault(); setDeleteConfirm(id); };
@@ -427,7 +541,7 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user }) => {
     <div className="space-y-8 animate-fade-in">
       <div className="flex justify-between items-center"><h2 className={`text-2xl font-bold ${colors.text}`}>Haftalık Planlama</h2>{isAdmin && <Button variant="danger" size="small" icon={RefreshCw} onClick={handleResetSchedule}>Haftayı Sıfırla & Arşivle</Button>}</div>
       {isAdmin && (
-        <Card title={editingId ? "Ödevi Düzenle" : "Hızlı Ödev Atama"} className={`${colors.isDark ? 'bg-slate-800/50' : 'bg-white'}`}><div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4"><div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Ders</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.courseId} onChange={e => setForm({...form, courseId: e.target.value, unitId: '', topic: '', source: ''})}><option value="">Seçiniz</option>{curriculum.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div><div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Ünite</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.unitId} onChange={e => setForm({...form, unitId: e.target.value, topic: ''})} disabled={!selectedCourse}><option value="">Seçiniz</option>{selectedCourse?.units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div><div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Konu</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.topic} onChange={e => setForm({...form, topic: e.target.value})} disabled={!selectedUnit}><option value="">Seçiniz</option>{selectedUnit?.topics.map(t => <option key={t} value={t}>{t}</option>)}</select></div><div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Gün</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.day} onChange={e => setForm({...form, day: e.target.value})}>{DAYS.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}</select></div></div><div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end"><div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Tip</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.type} onChange={e => setForm({...form, type: e.target.value})}>{TASK_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}</select></div><div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Soru Sayısı</label><input type="number" className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm disabled:opacity-50`} placeholder="Örn: 50" disabled={form.type !== 'soru'} value={form.count} onChange={e => setForm({...form, count: e.target.value})} /></div><div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Kaynak</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.source} onChange={e => setForm({...form, source: e.target.value})}><option value="">Kaynak Seçiniz / Diğer</option>{availableResources.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}</select></div><div className="flex gap-2"><Button onClick={handleAssign} icon={editingId ? Save : Plus} className="flex-1">{editingId ? 'Güncelle' : 'Ekle'}</Button>{editingId && <Button onClick={handleCancelEdit} variant="secondary">İptal</Button>}</div></div></Card>
+        <Card title={editingId ? "Ödevi Düzenle" : "Hızlı Ödev Atama"} className={`${colors.isDark ? 'bg-slate-800/50' : 'bg-white'}`}><div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4"><div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Ders</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.courseId} onChange={e => setForm({...form, courseId: e.target.value, unitId: '', topic: '', source: ''})}><option value="">Seçiniz</option>{activeCurriculum.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div><div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Ünite</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.unitId} onChange={e => setForm({...form, unitId: e.target.value, topic: ''})} disabled={!selectedCourse}><option value="">Seçiniz</option>{selectedCourse?.units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div><div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Konu</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.topic} onChange={e => setForm({...form, topic: e.target.value})} disabled={!selectedUnit}><option value="">Seçiniz</option>{selectedUnit?.topics.map(t => <option key={t} value={t}>{t}</option>)}</select></div><div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Gün</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.day} onChange={e => setForm({...form, day: e.target.value})}>{DAYS.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}</select></div></div><div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end"><div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Tip</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.type} onChange={e => setForm({...form, type: e.target.value})}>{TASK_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}</select></div><div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Soru Sayısı</label><input type="number" className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm disabled:opacity-50`} placeholder="Örn: 50" disabled={form.type !== 'soru'} value={form.count} onChange={e => setForm({...form, count: e.target.value})} /></div><div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Kaynak</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.source} onChange={e => setForm({...form, source: e.target.value})}><option value="">Kaynak Seçiniz / Diğer</option>{availableResources.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}</select></div><div className="flex gap-2"><Button onClick={handleAssign} icon={editingId ? Save : Plus} className="flex-1">{editingId ? 'Güncelle' : 'Ekle'}</Button>{editingId && <Button onClick={handleCancelEdit} variant="secondary">İptal</Button>}</div></div></Card>
       )}
       <div className="flex overflow-x-auto gap-4 pb-4 md:grid md:grid-cols-7 md:overflow-visible">
           {DAYS.map(day => { 
@@ -500,12 +614,15 @@ const GoalsModule = ({ student, onUpdateStudent, user }) => {
 
 // 4. KAYNAKLAR
 const ResourceModule = ({ student, curriculum, onUpdateStudent, user }) => {
-  const [selectedCourseId, setSelectedCourseId] = useState(curriculum[0]?.id || null);
+  // YENİ: Öğrencinin özelleştirilmiş müfredatını kullan
+  const activeCurriculum = student.curriculum || curriculum;
+  
+  const [selectedCourseId, setSelectedCourseId] = useState(activeCurriculum[0]?.id || null);
   const [showAddModal, setShowAddModal] = useState(false); const [showDetailModal, setShowDetailModal] = useState(null); const [newResource, setNewResource] = useState({ name: '', publisher: '' });
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const colors = useThemeColors();
    if (user.role === 'student') return <div className={`${colors.text} text-center mt-20`}>Bu alana erişim yetkiniz yok.</div>;
-  const selectedCourse = curriculum.find(c => c.id === selectedCourseId);
+  const selectedCourse = activeCurriculum.find(c => c.id === selectedCourseId);
   const resources = student.resources ? student.resources.filter(r => r.courseId === selectedCourseId) : [];
   const handleAddResource = () => { if(!newResource.name) return; const res = { id: Date.now(), courseId: selectedCourseId, name: newResource.name, publisher: newResource.publisher, progress: 0, notes: '', completedTopics: [] }; onUpdateStudent({ ...student, resources: [...(student.resources || []), res] }); setShowAddModal(false); setNewResource({ name: '', publisher: '' }); };
   const updateResource = (updatedRes) => { const updatedList = student.resources.map(r => r.id === updatedRes.id ? updatedRes : r); onUpdateStudent({ ...student, resources: updatedList }); if(showDetailModal) setShowDetailModal(updatedRes); };
@@ -514,7 +631,7 @@ const ResourceModule = ({ student, curriculum, onUpdateStudent, user }) => {
   const toggleTopicCompletion = (resource, uniqueTopicKey) => { const isCompleted = resource.completedTopics?.includes(uniqueTopicKey); let newCompleted = resource.completedTopics || []; if (isCompleted) newCompleted = newCompleted.filter(t => t !== uniqueTopicKey); else newCompleted = [...newCompleted, uniqueTopicKey]; let totalTopics = 0; selectedCourse.units.forEach(u => totalTopics += u.topics.length); const progress = totalTopics > 0 ? Math.round((newCompleted.length / totalTopics) * 100) : 0; updateResource({ ...resource, completedTopics: newCompleted, progress }); };
   return (
     <div className="flex flex-col md:flex-row gap-6 h-auto md:h-[calc(100vh-140px)] animate-fade-in">
-      <div className="w-full md:w-1/4 flex flex-col gap-2 max-h-60 md:max-h-full overflow-y-auto pr-2 custom-scrollbar">{curriculum.map(c => (<button key={c.id} onClick={() => setSelectedCourseId(c.id)} className={`p-4 rounded-lg text-left transition-all flex justify-between items-center ${selectedCourseId === c.id ? `bg-slate-800 border-orange-500 text-white border` : `${colors.bgCard} ${colors.border} ${colors.textSec}`}`}><span>{c.name}</span><span className={`text-xs ${colors.isDark ? 'bg-slate-700' : 'bg-slate-200'} px-2 py-1 rounded ${colors.textSec}`}>{student.resources?.filter(r => r.courseId === c.id).length || 0}</span></button>))}</div>
+      <div className="w-full md:w-1/4 flex flex-col gap-2 max-h-60 md:max-h-full overflow-y-auto pr-2 custom-scrollbar">{activeCurriculum.map(c => (<button key={c.id} onClick={() => setSelectedCourseId(c.id)} className={`p-4 rounded-lg text-left transition-all flex justify-between items-center ${selectedCourseId === c.id ? `bg-slate-800 border-orange-500 text-white border` : `${colors.bgCard} ${colors.border} ${colors.textSec}`}`}><span>{c.name}</span><span className={`text-xs ${colors.isDark ? 'bg-slate-700' : 'bg-slate-200'} px-2 py-1 rounded ${colors.textSec}`}>{student.resources?.filter(r => r.courseId === c.id).length || 0}</span></button>))}</div>
       <div className={`flex-1 ${colors.bgCardTransparent} border ${colors.border} rounded-xl p-6 overflow-y-auto custom-scrollbar`}><div className={`flex justify-between items-center mb-6 pb-4 border-b ${colors.border}`}><h2 className={`text-xl font-bold ${colors.text}`}>{selectedCourse?.name} Kaynakları</h2><Button size="small" icon={Plus} onClick={() => setShowAddModal(true)}>Kaynak Ekle</Button></div><div className="grid grid-cols-1 md:grid-cols-2 gap-4">{resources.map(res => (<div key={res.id} className={`${colors.bgCard} border ${colors.border} rounded-xl p-5 hover:border-slate-500 transition-colors ${colors.shadow}`}><div className="flex justify-between items-start mb-2"><div><h3 className={`font-bold ${colors.text} text-lg`}>{res.name}</h3><div className={`text-sm ${colors.textSec}`}>{res.publisher}</div></div><button onClick={(e) => requestDelete(e, res.id)} className="text-slate-600 hover:text-red-500 group p-2"><Trash2 size={16} className="group-hover:text-red-500"/></button></div><div className="mt-4"><div className={`flex justify-between text-xs ${colors.textSec} mb-1`}><span>İlerleme</span><span>%{res.progress}</span></div><div className={`w-full ${colors.isDark ? 'bg-slate-800' : 'bg-slate-200'} h-2 rounded-full overflow-hidden`}><div className="bg-emerald-500 h-full transition-all duration-500" style={{width: `${res.progress}%`}}></div></div></div><div className={`mt-4 pt-4 border-t ${colors.border} flex justify-between items-center`}><div className={`text-xs ${colors.textSec} flex items-center gap-1`}><Check size={12} className="text-emerald-500"/>{res.completedTopics?.length || 0} Konu Bitti</div><Button size="small" variant="secondary" onClick={() => setShowDetailModal(res)}>Detay & Düzenle</Button></div></div>))}{resources.length === 0 && <div className={`col-span-2 text-center py-10 ${colors.textSec}`}>Bu ders için eklenmiş kaynak yok.</div>}</div></div>
       {showAddModal && (<Modal title="Yeni Kaynak Ekle" onClose={() => setShowAddModal(false)}><div className="space-y-4"><Input label="Kaynak Adı" placeholder="Örn: 3D TYT Matematik Soru Bankası" value={newResource.name} onChange={e => setNewResource({...newResource, name: e.target.value})} /><Input label="Yayıncı" placeholder="Örn: 3D Yayınları" value={newResource.publisher} onChange={e => setNewResource({...newResource, publisher: e.target.value})} /><Button onClick={handleAddResource} className="w-full mt-4">Ekle</Button></div></Modal>)}
       {showDetailModal && (<Modal title={showDetailModal.name} onClose={() => setShowDetailModal(null)}><div className="space-y-6"><div><label className={`block text-xs font-medium ${colors.textSec} mb-2 uppercase`}>İlerleme Durumu (%)</label><div className="flex gap-4 items-center"><input type="range" min="0" max="100" className="w-full accent-orange-500" value={showDetailModal.progress} onChange={e => updateResource({...showDetailModal, progress: parseInt(e.target.value)})} /><span className={`font-bold ${colors.text} w-10 text-right`}>%{showDetailModal.progress}</span></div></div><div><label className={`block text-xs font-medium ${colors.textSec} mb-2 uppercase`}>Notlar</label><textarea className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded p-3 ${colors.text} text-sm h-24`} value={showDetailModal.notes} onChange={e => updateResource({...showDetailModal, notes: e.target.value})} placeholder="Bu kaynakla ilgili notlar..." /></div><div><label className={`block text-xs font-medium ${colors.textSec} mb-2 uppercase`}>Konu Takibi (Bu Kitap İçin)</label><div className={`${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} rounded-lg p-2 max-h-60 overflow-y-auto custom-scrollbar space-y-4`}>{selectedCourse.units.map(unit => (<div key={unit.id}><div className="text-orange-500 text-xs font-bold px-2 mb-1">{unit.name}</div>{unit.topics.map((topic, idx) => { const key = `${unit.id}-${idx}`; const isChecked = showDetailModal.completedTopics?.includes(key); return (<div key={key} onClick={() => toggleTopicCompletion(showDetailModal, key)} className={`flex items-center gap-3 p-2 ${colors.hoverBg} rounded cursor-pointer`}><div className={`w-4 h-4 rounded border flex items-center justify-center ${isChecked ? 'bg-emerald-500 border-emerald-500' : 'border-slate-600'}`}>{isChecked && <Check size={10} className="text-white"/>}</div><span className={`text-sm ${isChecked ? colors.text : colors.textSec}`}>{topic}</span></div>) })}</div>))}</div></div></div></Modal>)}
@@ -644,7 +761,7 @@ const PaymentModule = ({ student, onUpdateStudent, user }) => {
   );
 };
 
-// --- LOGIN SCREEN (GÜNCELLENDİ: Super Admin check kaldırıldı, standart kontrol) ---
+// --- LOGIN SCREEN ---
 const LoginScreen = ({ onLogin, students, admins, isFirebase, isLoading }) => {
   const [activeTab, setActiveTab] = useState('admin');
   const [password, setPassword] = useState('');
@@ -654,12 +771,10 @@ const LoginScreen = ({ onLogin, students, admins, isFirebase, isLoading }) => {
   const handleLogin = () => {
     setError('');
     if (activeTab === 'admin') {
-      // ESKİ KOD KALDIRILDI: if (password === 'canmete21') ...
-      // YENİ KOD: Standart admin kontrolü
       const adminUser = admins.find(a => a.username === username && a.password === password);
       if (adminUser) { 
-        // Eğer super_admin id'sine sahipse yetkiyi ver, yoksa normal admin.
         const role = adminUser.role === 'superadmin' ? 'superadmin' : 'admin';
+        // YENİ: Giriş yaparken ID'nin Firebase ID'si olduğundan emin olunuyor.
         onLogin({ role: role, id: adminUser.id, name: adminUser.name, username: adminUser.username, password: adminUser.password }); 
         return; 
       }
@@ -691,24 +806,48 @@ const MainApp = () => {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(isFirebaseActive); 
-  const [showProfileModal, setShowProfileModal] = useState(false); // YENİ: Profil modal state
+  const [showProfileModal, setShowProfileModal] = useState(false);
   const { theme, toggleTheme } = useTheme();
   const colors = useThemeColors();
 
+  // YENİ: Firebase'den veri çekme mantığı
+  // ÖNEMLİ: doc.id'yi objenin içine 'id' olarak ekliyoruz. Bu sayede Update/Delete işlemleri doğru çalışıyor.
   useEffect(() => {
     if (isFirebaseActive) {
       setIsLoading(true);
+      
+      // Öğrencileri Çek
       const qStudents = query(collection(db, "students"));
-      const unsubStudents = onSnapshot(qStudents, (snapshot) => { const data = []; snapshot.forEach(doc => data.push({id: doc.id, ...doc.data()})); setStudents(data); setIsLoading(false); });
+      const unsubStudents = onSnapshot(qStudents, (snapshot) => { 
+          const data = []; 
+          snapshot.forEach(doc => data.push({id: doc.id, ...doc.data()})); 
+          setStudents(data); 
+          setIsLoading(false); 
+      });
+      
+      // Yöneticileri Çek
       const qAdmins = query(collection(db, "admins"));
-      const unsubAdmins = onSnapshot(qAdmins, (snapshot) => { const data = []; snapshot.forEach(doc => data.push({id: doc.id, ...doc.data()})); setAdmins(data); });
+      const unsubAdmins = onSnapshot(qAdmins, (snapshot) => { 
+          const data = []; 
+          snapshot.forEach(doc => data.push({id: doc.id, ...doc.data()})); 
+          
+          // Eğer veritabanında hiç yönetici yoksa varsayılanı göster ama kaydetme (döngüyü önlemek için)
+          if(data.length === 0) setAdmins(INITIAL_ADMINS);
+          else setAdmins(data); 
+      });
+      
       return () => { unsubStudents(); unsubAdmins(); };
     }
   }, []);
 
+  // YENİ: Sadece giriş yapmış olan öğretmene ait öğrencileri filtreler
   const myStudents = React.useMemo(() => {
     if (!user) return [];
     if (user.role === 'student') return students.filter(s => s.id === user.id);
+    
+    // Yöneticiler için filtreleme
+    // Not: Superadmin de olsa ana ekranda sadece kendi eklediklerini görür.
+    // Tüm öğrencileri görmek için Yönetici Paneline gitmelidir.
     return students.filter(s => s.teacherId === user.id);
   }, [user, students]);
 
@@ -721,15 +860,23 @@ const MainApp = () => {
   const currentStudent = (user?.role === 'admin' || user?.role === 'superadmin') ? students.find(s => s.id === selectedStudentId) : students.find(s => s.id === user?.id);
 
   const updateStudentData = async (updated) => {
-    if (isFirebaseActive) { try { const studentRef = doc(db, "students", updated.id); const { id, ...data } = updated; await setDoc(studentRef, data, { merge: true }); } catch (error) { console.error("Güncelleme hatası:", error); alert("Bağlantı hatası: Kayıt yapılamadı."); }
-    } else { setStudents(prev => prev.map(s => s.id === updated.id ? updated : s)); }
+    if (isFirebaseActive) { 
+        try { 
+            // id alanını veritabanına veri olarak yazmamak için ayırıyoruz, referans olarak kullanıyoruz.
+            const studentRef = doc(db, "students", updated.id); 
+            const { id, ...data } = updated; 
+            await setDoc(studentRef, data, { merge: true }); 
+        } catch (error) { 
+            console.error("Güncelleme hatası:", error); 
+            alert("Bağlantı hatası: Kayıt yapılamadı."); 
+        }
+    } else { 
+        setStudents(prev => prev.map(s => s.id === updated.id ? updated : s)); 
+    }
   };
 
-  // YENİ: Profil güncelleme fonksiyonu
   const handleUpdateProfile = async (updatedUser) => {
-    // Local state güncelle
     setUser(updatedUser);
-
     if (updatedUser.role === 'student') {
         if(isFirebaseActive) {
             try { const ref = doc(db, "students", updatedUser.id); const { id, ...data } = updatedUser; await updateDoc(ref, data); } catch(e) { console.error(e); }
@@ -773,7 +920,6 @@ const MainApp = () => {
         <div className={`p-6 border-b ${colors.border} flex flex-col gap-1`}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-orange-500 font-bold text-lg truncate"><Users /><span>{user.name.split(' ')[0]}</span></div>
-            {/* YENİ: Profil Düzenleme İkonu */}
             <button onClick={() => setShowProfileModal(true)} className={`${colors.textSec} hover:text-orange-500 transition-colors`}><Settings size={18} /></button>
           </div>
           <div className={`text-xs ${colors.textSec} ml-8`}>{user.role === 'superadmin' ? 'Yönetici' : user.role === 'admin' ? 'Öğretmen' : 'Öğrenci'}</div>
@@ -792,13 +938,10 @@ const MainApp = () => {
 
         <nav className="flex-1 overflow-y-auto px-4 space-y-1 mt-4 custom-scrollbar">{MENU_ITEMS.filter(item => item.roles.includes(user.role)).map(item => (<button key={item.id} onClick={() => { setActiveTab(item.id); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === item.id ? 'bg-orange-600 text-white shadow-lg shadow-orange-500/30' : `${colors.textSec} hover:${colors.text} hover:${colors.hoverBg}`}`}><item.icon size={18} /> <span className="text-sm font-medium">{item.label}</span></button>))}</nav>
         <div className={`p-4 border-t ${colors.border} space-y-2`}>
-            {/* TEMA DEĞİŞTİRME BUTONU */}
             <button onClick={toggleTheme} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl ${colors.textSec} hover:${colors.text} ${colors.hoverBg} transition-all`}>
               {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />} 
               <span className="text-sm font-medium">{theme === 'dark' ? 'Aydınlık Mod' : 'Karanlık Mod'}</span>
             </button>
-
-            {/* YENİ: Profil Butonu */}
             <button onClick={() => setShowProfileModal(true)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl ${colors.textSec} hover:${colors.text} ${colors.hoverBg} transition-all`}>
               <User size={18} />
               <span className="text-sm font-medium">Profilim</span>
@@ -813,10 +956,11 @@ const MainApp = () => {
         {user.role === 'superadmin' && activeTab === 'admin_panel' ? (
            <AdminManagementModule admins={admins} setAdmins={setAdmins} user={user} allStudents={students} onInspectStudent={handleInspectStudent} />
         ) : (user.role === 'admin' || user.role === 'superadmin') && activeTab === 'dashboard' ? (
+           // ÖNEMLİ: Ana ekrana sadece hocanın kendi öğrencileri (myStudents) gönderilir.
            <DashboardModule user={user} students={myStudents} setStudents={setStudents} setSelectedStudentId={setSelectedStudentId} onUpdateStudent={updateStudentData} />
         ) : !currentStudent ? <div className={`text-center mt-20 ${colors.textSec}`}>Lütfen işlem yapmak için bir öğrenci seçiniz veya öğrenci ekleyiniz.</div> : (
           <>
-            {activeTab === 'dashboard' && <DashboardModule user={user} students={students} setStudents={setStudents} setSelectedStudentId={setSelectedStudentId} onUpdateStudent={updateStudentData} />}
+            {activeTab === 'dashboard' && <DashboardModule user={user} students={myStudents} setStudents={setStudents} setSelectedStudentId={setSelectedStudentId} onUpdateStudent={updateStudentData} />}
             {activeTab === 'schedule' && <ScheduleModule user={user} student={currentStudent} curriculum={curriculum} onUpdateStudent={updateStudentData} />}
             {activeTab === 'goals' && <GoalsModule user={user} student={currentStudent} onUpdateStudent={updateStudentData} />}
             {activeTab === 'resources' && <ResourceModule user={user} student={currentStudent} curriculum={curriculum} onUpdateStudent={updateStudentData} />}
@@ -828,7 +972,6 @@ const MainApp = () => {
           </>
         )}
       </main>
-      {/* YENİ: Profil Modal */}
       {showProfileModal && <ProfileSettingsModal user={user} onClose={() => setShowProfileModal(false)} onUpdate={handleUpdateProfile} />}
     </div>
   );
