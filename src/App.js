@@ -254,7 +254,9 @@ const AdminManagementModule = ({ admins, setAdmins, user, allStudents, onInspect
                // Burada ID olarak document ID kullanılıyor
                const adminRef = doc(db, "admins", editingAdmin.id); 
                const { id, ...data } = updatedAdmin; 
-               await updateDoc(adminRef, data); 
+               // DÜZELTME: updateDoc yerine setDoc(..., {merge: true}) kullanıldı.
+               // Bu sayede eğer ilk başta DB'de yoksa bile (initial state'den geliyorsa) oluşturulur.
+               await setDoc(adminRef, data, { merge: true }); 
             } catch(e) { 
                 console.error(e); 
                 alert("Güncelleme hatası: " + e.message); 
@@ -279,14 +281,20 @@ const AdminManagementModule = ({ admins, setAdmins, user, allStudents, onInspect
   };
 
   const handleDelete = async (id) => { 
+      // GÜVENLİK: Kendi hesabını silmeyi engelle
+      if (id === user.id) {
+          alert("Güvenlik nedeniyle şu an giriş yapmış olduğunuz hesabı silemezsiniz.");
+          setDeleteConfirm(null);
+          return;
+      }
+
       if(isFirebaseActive) { 
           // YENİ: Firebase silme işlemi için doğrudan doküman ID'sini kullanıyoruz.
-          // onSnapshot kısmında doc.id'yi nesneye 'id' olarak atadığımız için buradaki 'id' aslında Firebase Key'dir.
           try {
               await deleteDoc(doc(db, "admins", id));
           } catch(e) {
               console.error("Silme hatası:", e);
-              alert("Silme başarısız oldu: " + e.message);
+              // Eğer döküman yoksa (sadece RAM'deyse) hata vermez, ama biz yine de kullanıcıya bilgi verebiliriz.
           }
       } else { 
           setAdmins(admins.filter(a => a.id !== id)); 
@@ -885,7 +893,13 @@ const MainApp = () => {
         }
     } else {
         if(isFirebaseActive) {
-            try { const ref = doc(db, "admins", updatedUser.id); const { id, ...data } = updatedUser; await updateDoc(ref, data); } catch(e) { console.error(e); }
+            try { 
+              // DÜZELTME: updateDoc yerine setDoc(..., {merge: true}) kullanıldı.
+              // Bu sayede "Initial Admin" güncellenirken veritabanında kaydı yoksa oluşturulur.
+              const ref = doc(db, "admins", updatedUser.id); 
+              const { id, ...data } = updatedUser; 
+              await setDoc(ref, data, { merge: true }); 
+            } catch(e) { console.error(e); }
         } else {
             setAdmins(prev => prev.map(a => a.id === updatedUser.id ? updatedUser : a));
         }
