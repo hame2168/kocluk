@@ -5,7 +5,7 @@ import {
   PieChart, Activity, ArrowUpRight, TrendingUp, Award, Clock, List, Book, RefreshCw, Zap, 
   Library, FileText, CheckCircle, Flag, Phone, GraduationCap, History, Star, Archive, AlertTriangle,
   Play, Pause, RotateCcw, Timer, Menu, Database, CloudOff, Cloud, Shield, Key, Eye, Sun, Moon, Settings,
-  ZapOff
+  ZapOff, EyeOff
 } from 'lucide-react';
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, addDoc, updateDoc, doc, deleteDoc, onSnapshot, query, setDoc, getDoc } from "firebase/firestore";
@@ -68,7 +68,6 @@ const useThemeColors = () => {
 
 // --- CHART HELPER (SMOOTH CURVES) ---
 const svgPath = (points, command) => {
-  // build the d attributes by looping over the points
   const d = points.reduce((acc, point, i, a) => i === 0
     ? `M ${point[0]},${point[1]}`
     : `${acc} ${command(point, i, a)}`
@@ -496,11 +495,15 @@ const LessonModule = ({ student, curriculum, setCurriculum, onUpdateStudent, use
 // 2. HAFTALIK PROGRAM
 const ScheduleModule = ({ student, curriculum, onUpdateStudent, user }) => {
   const activeCurriculum = student.curriculum || curriculum;
-  const [form, setForm] = useState({ day: 'Mon', courseId: '', unitId: '', topic: '', type: 'soru', count: '', source: '', note: '' });
+  // Çoklu gün seçimi için form yapısı güncellendi: day -> days array
+  const [form, setForm] = useState({ days: [], courseId: '', unitId: '', topic: '', type: 'soru', count: '', source: '', note: '' });
   const [editingId, setEditingId] = useState(null); 
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [showQuickModal, setShowQuickModal] = useState(false);
-  const [quickForm, setQuickForm] = useState({ text: '', day: 'Mon' });
+  // Quick Assign için de çoklu gün seçimi
+  const [quickForm, setQuickForm] = useState({ text: '', days: [] });
+  const [isEditMode, setIsEditMode] = useState(false); // Düzenleme modu görünürlüğü
+  const [expandedArchive, setExpandedArchive] = useState(null); // Arşiv detayını açmak için
   const colors = useThemeColors();
 
   const selectedCourse = activeCurriculum.find(c => c.id === form.courseId);
@@ -508,6 +511,7 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user }) => {
   const availableResources = student.resources ? student.resources.filter(r => r.courseId === form.courseId) : [];
   const assignments = student.assignments || [];
   
+  // İstatistiklerde opsiyonel 'count' değerini güvenli parse etme
   const weeklySolvedQuestions = assignments.filter(a => a.type === 'soru' && a.status === 'completed').reduce((acc, curr) => acc + (parseInt(curr.count) || 0), 0);
   const weeklyTaskCount = assignments.length;
   const weeklyCompletedCount = assignments.filter(a => a.status === 'completed').length;
@@ -515,50 +519,194 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user }) => {
   const monthlySolved = (student.stats?.monthlySolved || 0) + weeklySolvedQuestions;
   const allTimeSolved = (student.stats?.totalSolved || 0) + weeklySolvedQuestions;
   
-  const handleAssign = () => { if(!form.courseId || !form.topic) return alert("Lütfen ders ve konu seçiniz."); if(form.type === 'soru' && !form.count) return alert("Soru sayısı giriniz."); if (editingId) { const updatedAssignments = assignments.map(a => a.id === editingId ? { ...a, ...form, subject: selectedCourse.name } : a); onUpdateStudent({ ...student, assignments: updatedAssignments }); setEditingId(null); } else { const newAssignment = { id: Date.now(), status: 'pending', subject: selectedCourse.name, ...form }; onUpdateStudent({ ...student, assignments: [...assignments, newAssignment] }); } setForm(prev => ({ ...prev, count: '', source: '', unitId: '', topic: '', note: '' })); };
+  const handleAssign = () => { 
+      if(!form.courseId || !form.topic) return alert("Lütfen ders ve konu seçiniz."); 
+      if(form.days.length === 0) return alert("En az bir gün seçiniz.");
+      
+      let newAssignments = [...assignments];
+
+      if (editingId) { 
+         // Düzenleme modunda tek bir kayıt güncellenir (gün değişebilir ama tekil kalır)
+         // Not: Çoklu gün seçimi yeni ekleme içindir. Düzenlemede tekil gün mantığını koruyabiliriz veya onu da geliştirebiliriz.
+         // Mevcut mantıkta id ile tek bir kayıt buluyoruz.
+         const day = form.days[0]; // Düzenlemede ilk seçili günü alalım
+         newAssignments = newAssignments.map(a => a.id === editingId ? { ...a, ...form, day: day, subject: selectedCourse.name } : a); 
+         setEditingId(null); 
+      } else { 
+         // Çoklu gün seçimi ile toplu ekleme
+         form.days.forEach(day => {
+             const newAssignment = { 
+                 id: Date.now() + Math.random(), // Unique ID 
+                 status: 'pending', 
+                 subject: selectedCourse.name, 
+                 ...form,
+                 day: day // Her kayıt için ayrı gün
+             };
+             // days arrayini kaydetmemize gerek yok, her obje kendi 'day' alanına sahip
+             delete newAssignment.days;
+             newAssignments.push(newAssignment);
+         });
+      } 
+      
+      onUpdateStudent({ ...student, assignments: newAssignments });
+      setForm(prev => ({ ...prev, count: '', source: '', unitId: '', topic: '', note: '', days: [] })); 
+  };
   
   // HIZLI GÖREV EKLEME
   const handleQuickAssign = () => {
-    if(!quickForm.text) return;
-    const newAssignment = { 
-        id: Date.now(), 
-        status: 'pending', 
-        subject: 'Ek Görev', 
-        topic: quickForm.text, 
-        day: quickForm.day, 
-        type: 'ozel', 
-        count: '', 
-        source: '' 
-    };
-    onUpdateStudent({ ...student, assignments: [...assignments, newAssignment] });
+    if(!quickForm.text) return alert("Görev içeriği giriniz.");
+    if(quickForm.days.length === 0) return alert("En az bir gün seçiniz.");
+    
+    const newAssignments = [...assignments];
+    
+    quickForm.days.forEach(day => {
+        const newAssignment = { 
+            id: Date.now() + Math.random(), 
+            status: 'pending', 
+            subject: 'Ek Görev', 
+            topic: quickForm.text, 
+            day: day, 
+            type: 'ozel', 
+            count: '', // Opsiyonel
+            source: '' // Opsiyonel
+        };
+        newAssignments.push(newAssignment);
+    });
+
+    onUpdateStudent({ ...student, assignments: newAssignments });
     setShowQuickModal(false);
-    setQuickForm({ text: '', day: 'Mon' });
+    setQuickForm({ text: '', days: [] });
   };
 
-  const handleEdit = (task) => { const course = activeCurriculum.find(c => c.name === task.subject); setForm({ day: task.day, courseId: course ? course.id : '', unitId: task.unitId || '', topic: task.topic, type: task.type, count: task.count, source: task.source || '', note: task.note || '' }); setEditingId(task.id); window.scrollTo(0,0); };
-  const handleCancelEdit = () => { setEditingId(null); setForm(prev => ({ ...prev, count: '', source: '', unitId: '', topic: '', note: '' })); };
+  const handleEdit = (task) => { 
+      const course = activeCurriculum.find(c => c.name === task.subject); 
+      setForm({ 
+          days: [task.day], // Düzenlemede mevcut günü seçili getir
+          courseId: course ? course.id : '', 
+          unitId: task.unitId || '', 
+          topic: task.topic, 
+          type: task.type, 
+          count: task.count, 
+          source: task.source || '', 
+          note: task.note || '' 
+      }); 
+      setEditingId(task.id); 
+      window.scrollTo(0,0); 
+  };
+  
+  const handleCancelEdit = () => { setEditingId(null); setForm(prev => ({ ...prev, count: '', source: '', unitId: '', topic: '', note: '', days: [] })); };
   const toggleTaskStatus = (id) => { const updated = assignments.map(a => a.id === id ? { ...a, status: a.status === 'completed' ? 'pending' : 'completed' } : a); let newStats = { ...student.stats }; const task = assignments.find(a => a.id === id); if (task && task.status !== 'completed') { newStats.xp = (newStats.xp || 0) + 50; newStats.level = Math.floor(newStats.xp / 1000) + 1; } onUpdateStudent({ ...student, assignments: updated, stats: newStats }); };
   const requestDelete = (e, id) => { e.stopPropagation(); e.preventDefault(); setDeleteConfirm(id); };
   const confirmDelete = () => { if (deleteConfirm) { const filtered = assignments.filter(a => a.id !== deleteConfirm); onUpdateStudent({ ...student, assignments: filtered }); setDeleteConfirm(null); } };
   const handleDeleteArchive = (weekId) => { if(window.confirm("Bu arşiv kaydını kalıcı olarak silmek istediğinize emin misiniz?")) { const updatedArchives = student.pastWeeks.filter(w => w.id !== weekId); onUpdateStudent({ ...student, pastWeeks: updatedArchives }); } };
-  const handleResetSchedule = () => { if(window.confirm("Haftalık programı sıfırlamak üzeresiniz. Mevcut program arşive eklenecek ve liste temizlenecek. Onaylıyor musunuz?")) { const newTotalSolved = (student.stats?.totalSolved || 0) + weeklySolvedQuestions; const newMonthlySolved = (student.stats?.monthlySolved || 0) + weeklySolvedQuestions; const archivedWeek = { id: Date.now(), date: new Date().toLocaleDateString('tr-TR'), assignments: assignments, solvedCount: weeklySolvedQuestions }; onUpdateStudent({ ...student, assignments: [], pastWeeks: [archivedWeek, ...(student.pastWeeks || [])], stats: { ...student.stats, totalSolved: newTotalSolved, monthlySolved: newMonthlySolved } }); } };
-  const getDailyStats = (dayId) => { const dayTasks = assignments.filter(a => a.day === dayId); return { topic: dayTasks.filter(t => t.type === 'konu').length, question: dayTasks.filter(t => t.type === 'soru').reduce((acc, curr) => acc + (parseInt(curr.count) || 0), 0), repeat: dayTasks.filter(t => t.type === 'tekrar').length, exam: dayTasks.filter(t => t.type === 'deneme').length }; };
+  
+  const handleResetSchedule = () => { 
+      if(window.confirm("Haftalık programı sıfırlamak üzeresiniz. Mevcut program arşive eklenecek ve liste temizlenecek. Onaylıyor musunuz?")) { 
+          const newTotalSolved = (student.stats?.totalSolved || 0) + weeklySolvedQuestions; 
+          const newMonthlySolved = (student.stats?.monthlySolved || 0) + weeklySolvedQuestions; 
+          
+          // Arşive kaydederken detaylı listeyi saklıyoruz
+          const archivedWeek = { 
+              id: Date.now(), 
+              date: new Date().toLocaleDateString('tr-TR'), 
+              assignments: assignments, // Tüm görev listesini sakla
+              solvedCount: weeklySolvedQuestions 
+          }; 
+          
+          onUpdateStudent({ 
+              ...student, 
+              assignments: [], 
+              pastWeeks: [archivedWeek, ...(student.pastWeeks || [])], 
+              stats: { ...student.stats, totalSolved: newTotalSolved, monthlySolved: newMonthlySolved } 
+          }); 
+      } 
+  };
+  
+  const getDailyStats = (dayId) => { 
+      const dayTasks = assignments.filter(a => a.day === dayId); 
+      return { 
+          topic: dayTasks.filter(t => t.type === 'konu').length, 
+          question: dayTasks.filter(t => t.type === 'soru').reduce((acc, curr) => acc + (parseInt(curr.count) || 0), 0), 
+          repeat: dayTasks.filter(t => t.type === 'tekrar').length, 
+          exam: dayTasks.filter(t => t.type === 'deneme').length 
+      }; 
+  };
+  
   const isAdmin = user.role === 'admin' || user.role === 'superadmin';
   const isStudent = user.role === 'student';
 
+  // Gün seçimi butonu bileşeni
+  const DaySelector = ({ selectedDays, onChange }) => (
+      <div className="flex flex-wrap gap-1">
+          {DAYS.map(d => (
+              <button
+                  key={d.id}
+                  onClick={() => {
+                      const newDays = selectedDays.includes(d.id) 
+                          ? selectedDays.filter(id => id !== d.id) 
+                          : [...selectedDays, d.id];
+                      onChange(newDays);
+                  }}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all ${selectedDays.includes(d.id) ? 'bg-orange-600 text-white border-orange-600' : `${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} ${colors.textSec} border-transparent hover:border-slate-500`}`}
+              >
+                  {d.label.substring(0,3)}
+              </button>
+          ))}
+      </div>
+  );
+
   return (
     <div className="space-y-8 animate-fade-in">
-      <div className="flex justify-between items-center"><h2 className={`text-2xl font-bold ${colors.text}`}>Haftalık Planlama</h2><div className="flex gap-2">{isAdmin && <Button size="small" icon={Zap} onClick={() => setShowQuickModal(true)}>Hızlı Görev Ekle</Button>}{isAdmin && <Button variant="danger" size="small" icon={RefreshCw} onClick={handleResetSchedule}>Haftayı Sıfırla & Arşivle</Button>}</div></div>
+      <div className="flex justify-between items-center">
+          <h2 className={`text-2xl font-bold ${colors.text}`}>Haftalık Planlama</h2>
+          <div className="flex gap-2">
+              {isAdmin && <Button variant="ghost" onClick={() => setIsEditMode(!isEditMode)} icon={Settings} className={isEditMode ? 'text-orange-500 bg-orange-500/10' : ''} />}
+              {isAdmin && <Button size="small" icon={Zap} onClick={() => setShowQuickModal(true)}>Hızlı Görev</Button>}
+              {isAdmin && <Button variant="danger" size="small" icon={RefreshCw} onClick={handleResetSchedule}>Arşivle & Sıfırla</Button>}
+          </div>
+      </div>
+      
       {isAdmin && (
-        <Card title={editingId ? "Ödevi Düzenle" : "Detaylı Ödev Atama"} className={`${colors.isDark ? 'bg-slate-800/50' : 'bg-white'}`}><div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4"><div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Ders</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.courseId} onChange={e => setForm({...form, courseId: e.target.value, unitId: '', topic: '', source: ''})}><option value="">Seçiniz</option>{activeCurriculum.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div><div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Ünite</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.unitId} onChange={e => setForm({...form, unitId: e.target.value, topic: ''})} disabled={!selectedCourse}><option value="">Seçiniz</option>{selectedCourse?.units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div><div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Konu</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.topic} onChange={e => setForm({...form, topic: e.target.value})} disabled={!selectedUnit}><option value="">Seçiniz</option>{selectedUnit?.topics.map(t => <option key={t} value={t}>{t}</option>)}</select></div><div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Gün</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.day} onChange={e => setForm({...form, day: e.target.value})}>{DAYS.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}</select></div></div><div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end mb-4"><div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Tip</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.type} onChange={e => setForm({...form, type: e.target.value})}>{TASK_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}</select></div><div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Soru Sayısı</label><input type="number" className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm disabled:opacity-50`} placeholder="Örn: 50" disabled={form.type !== 'soru'} value={form.count} onChange={e => setForm({...form, count: e.target.value})} /></div><div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Kaynak</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.source} onChange={e => setForm({...form, source: e.target.value})}><option value="">Kaynak Seçiniz / Diğer</option>{availableResources.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}</select></div></div>
-        
-        {/* YENİ EKLENEN NOT ALANI */}
-        <div className="mb-4">
-             <Input label="Not / Sayfa Aralığı (İsteğe Bağlı)" placeholder="Örn: Sayfa 70-80 arası çözülecek" value={form.note} onChange={e => setForm({...form, note: e.target.value})} />
-        </div>
-
-        <div className="flex gap-2"><Button onClick={handleAssign} icon={editingId ? Save : Plus} className="flex-1">{editingId ? 'Güncelle' : 'Ekle'}</Button>{editingId && <Button onClick={handleCancelEdit} variant="secondary">İptal</Button>}</div></Card>
+        <Card title={editingId ? "Ödevi Düzenle" : "Detaylı Ödev Atama"} className={`${colors.isDark ? 'bg-slate-800/50' : 'bg-white'}`}>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                <div>
+                    <label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Ders</label>
+                    <select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.courseId} onChange={e => setForm({...form, courseId: e.target.value, unitId: '', topic: '', source: ''})}><option value="">Seçiniz</option>{activeCurriculum.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+                </div>
+                <div>
+                    <label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Ünite</label>
+                    <select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.unitId} onChange={e => setForm({...form, unitId: e.target.value, topic: ''})} disabled={!selectedCourse}><option value="">Seçiniz</option>{selectedCourse?.units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select>
+                </div>
+                <div>
+                    <label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Konu</label>
+                    <select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.topic} onChange={e => setForm({...form, topic: e.target.value})} disabled={!selectedUnit}><option value="">Seçiniz</option>{selectedUnit?.topics.map(t => <option key={t} value={t}>{t}</option>)}</select>
+                </div>
+                <div>
+                    <label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Günler (Çoklu)</label>
+                    <DaySelector selectedDays={form.days} onChange={days => setForm({...form, days})} />
+                </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end mb-4">
+                <div>
+                    <label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Tip</label>
+                    <select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.type} onChange={e => setForm({...form, type: e.target.value})}>{TASK_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}</select>
+                </div>
+                <div>
+                    <label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Soru Sayısı</label>
+                    <input type="number" className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm disabled:opacity-50`} placeholder="Örn: 50" disabled={form.type !== 'soru'} value={form.count} onChange={e => setForm({...form, count: e.target.value})} />
+                </div>
+                <div>
+                    <label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Kaynak</label>
+                    <select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.source} onChange={e => setForm({...form, source: e.target.value})}><option value="">Kaynak Seçiniz / Diğer</option>{availableResources.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}</select>
+                </div>
+            </div>
+            <div className="mb-4">
+                 <Input label="Not / Sayfa Aralığı (İsteğe Bağlı)" placeholder="Örn: Sayfa 70-80 arası çözülecek" value={form.note} onChange={e => setForm({...form, note: e.target.value})} />
+            </div>
+            <div className="flex gap-2"><Button onClick={handleAssign} icon={editingId ? Save : Plus} className="flex-1">{editingId ? 'Güncelle' : 'Ekle'}</Button>{editingId && <Button onClick={handleCancelEdit} variant="secondary">İptal</Button>}</div>
+        </Card>
       )}
+
       <div className="flex overflow-x-auto gap-4 pb-4 md:grid md:grid-cols-7 md:overflow-visible">
           {DAYS.map(day => { 
             const dayTasks = assignments.filter(a => a.day === day.id); 
@@ -567,9 +715,18 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user }) => {
             <div key={day.id} className={`min-w-[280px] md:min-w-0 ${colors.bgCardTransparent} border ${colors.border} rounded-xl flex flex-col h-full snap-center`}>
                 <div className={`p-3 border-b ${colors.border} ${colors.bgCard} rounded-t-xl text-center`}><span className={`font-bold ${colors.text} text-sm`}>{day.label}</span><span className={`block text-xs ${colors.textSec}`}>{dayTasks.length} Görev</span></div>
                 <div className="p-2 space-y-2 flex-1">
-                    {dayTasks.map(task => (<div key={task.id} className={`p-3 rounded-lg border text-xs group relative ${colors.shadow} ${task.status === 'completed' ? 'bg-emerald-900/20 border-emerald-900/50 opacity-75' : `${colors.bgCard} ${colors.border}`}`}><div className="flex justify-between items-start"><span className="font-bold text-orange-400 truncate w-full pr-12">{task.subject}</span><div className={`flex gap-1 absolute right-2 top-2 z-10 ${colors.isDark ? 'bg-slate-800/80' : 'bg-white/80'} p-1 rounded backdrop-blur-sm shadow-sm border ${colors.border}`}>{isAdmin && <button onClick={(e) => {e.stopPropagation(); handleEdit(task)}} className={`text-slate-400 hover:text-blue-400 p-2`}><Edit2 size={12}/></button>}{!isStudent && <button onClick={(e) => requestDelete(e, task.id)} className="text-slate-400 hover:text-red-500 p-2"><Trash2 size={12}/></button>}</div></div><div className={`${colors.text} mt-1 text-sm font-medium line-clamp-2`}>{task.topic}</div><div className="mt-2 flex flex-col gap-1"><div className={`flex justify-between items-center text-xs ${colors.textSec}`}><span className={`${colors.isDark ? 'bg-slate-700/50' : 'bg-slate-200'} px-1.5 py-0.5 rounded`}>{TASK_TYPES.find(t=>t.id === task.type)?.label}</span>{task.type === 'soru' && <span className="font-bold text-orange-400">{task.count} Soru</span>}</div>{task.source && (<div className="flex items-center gap-1 text-xs text-blue-400 mt-0.5"><Book size={10} /><span className="truncate">{task.source}</span></div>)}</div>
+                    {dayTasks.map(task => (<div key={task.id} className={`p-3 rounded-lg border text-xs group relative ${colors.shadow} ${task.status === 'completed' ? 'bg-emerald-900/20 border-emerald-900/50 opacity-75' : `${colors.bgCard} ${colors.border}`}`}><div className="flex justify-between items-start"><span className="font-bold text-orange-400 truncate w-full pr-12">{task.subject}</span>
                     
-                    {/* GÖREV KARTINDA NOT GÖSTERİMİ */}
+                    {/* EDIT MODE CONTROL */}
+                    {(isAdmin && isEditMode) && (
+                        <div className={`flex gap-1 absolute right-2 top-2 z-10 ${colors.isDark ? 'bg-slate-800/80' : 'bg-white/80'} p-1 rounded backdrop-blur-sm shadow-sm border ${colors.border}`}>
+                            <button onClick={(e) => {e.stopPropagation(); handleEdit(task)}} className={`text-slate-400 hover:text-blue-400 p-2`}><Edit2 size={12}/></button>
+                            <button onClick={(e) => requestDelete(e, task.id)} className="text-slate-400 hover:text-red-500 p-2"><Trash2 size={12}/></button>
+                        </div>
+                    )}
+
+                    </div><div className={`${colors.text} mt-1 text-sm font-medium line-clamp-2`}>{task.topic}</div><div className="mt-2 flex flex-col gap-1"><div className={`flex justify-between items-center text-xs ${colors.textSec}`}><span className={`${colors.isDark ? 'bg-slate-700/50' : 'bg-slate-200'} px-1.5 py-0.5 rounded`}>{TASK_TYPES.find(t=>t.id === task.type)?.label}</span>{task.type === 'soru' && task.count && <span className="font-bold text-orange-400">{task.count} Soru</span>}</div>{task.source && (<div className="flex items-center gap-1 text-xs text-blue-400 mt-0.5"><Book size={10} /><span className="truncate">{task.source}</span></div>)}</div>
+                    
                     {task.note && (
                         <div className={`mt-2 pt-2 border-t ${colors.border} text-[10px] ${colors.textSec} italic`}>
                             Not: <span className={colors.text}>{task.note}</span>
@@ -583,18 +740,88 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user }) => {
             </div>) 
         })}
       </div>
+
        <DeleteConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={confirmDelete} />
+       
        {showQuickModal && (
         <Modal title="Hızlı Görev Ata" onClose={() => setShowQuickModal(false)}>
             <div className="space-y-4">
-                <div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Görev İçeriği</label><input type="text" className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-3 ${colors.text} text-sm`} placeholder="Örn: X Videosunu İzle, Y Materyalini Hazırla" value={quickForm.text} onChange={e => setQuickForm({...quickForm, text: e.target.value})} /></div>
-                <div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Gün</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-3 ${colors.text} text-sm`} value={quickForm.day} onChange={e => setQuickForm({...quickForm, day: e.target.value})}>{DAYS.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}</select></div>
+                <div>
+                    <label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Görev İçeriği</label>
+                    <input type="text" className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-3 ${colors.text} text-sm`} placeholder="Örn: X Videosunu İzle, Y Materyalini Hazırla" value={quickForm.text} onChange={e => setQuickForm({...quickForm, text: e.target.value})} />
+                </div>
+                <div>
+                    <label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Günler (Çoklu)</label>
+                    <DaySelector selectedDays={quickForm.days} onChange={days => setQuickForm({...quickForm, days})} />
+                </div>
+                <div className="text-xs text-orange-500 bg-orange-500/10 p-2 rounded">
+                    Not: Soru sayısı ve kaynak opsiyoneldir. Soru sayısı girilmezse istatistiklere 0 olarak yansır.
+                </div>
                 <Button className="w-full mt-2" onClick={handleQuickAssign}>Atama Yap</Button>
             </div>
         </Modal>
        )}
+
        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mt-8"><Card className={`border-l-4 border-l-blue-500 ${colors.bgCard}`}><div className="flex items-center gap-3 mb-2"><div className="p-2 bg-blue-500/20 rounded-lg text-blue-500"><Zap size={20}/></div><span className={`text-xs uppercase font-bold ${colors.textSec}`}>Haftalık Performans</span></div><div className="flex justify-between items-end"><div><div className={`text-2xl font-bold ${colors.text}`}>{weeklySolvedQuestions} <span className={`text-sm font-normal ${colors.textSec}`}>Soru</span></div></div><div className="text-right"><div className="text-xl font-bold text-blue-400">%{completionRate}</div><div className={`text-[10px] ${colors.textSec}`}>Tamamlanma</div></div></div></Card><Card className={`border-l-4 border-l-purple-500 ${colors.bgCard}`}><div className="flex items-center gap-3 mb-2"><div className="p-2 bg-purple-500/20 rounded-lg text-purple-500"><Calendar size={20}/></div><span className={`text-xs uppercase font-bold ${colors.textSec}`}>Aylık Toplam</span></div><div className={`text-3xl font-bold ${colors.text} mt-2`}>{(monthlySolved || 0).toLocaleString()}</div></Card><Card className={`border-l-4 border-l-emerald-500 ${colors.bgCard}`}><div className="flex items-center gap-3 mb-2"><div className="p-2 bg-emerald-500/20 rounded-lg text-emerald-500"><Award size={20}/></div><span className={`text-xs uppercase font-bold ${colors.textSec}`}>Tüm Zamanlar</span></div><div className={`text-3xl font-bold ${colors.text} mt-2`}>{(allTimeSolved || 0).toLocaleString()}</div></Card><Card className={`border-l-4 border-l-orange-500 ${colors.bgCard}`}><div className="flex items-center gap-3 mb-2"><div className="p-2 bg-orange-500/20 rounded-lg text-orange-500"><List size={20}/></div><span className={`text-xs uppercase font-bold ${colors.textSec}`}>Görev Durumu</span></div><div className="grid grid-cols-2 gap-2 mt-2"><div className={`${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} p-2 rounded text-center`}><div className={`text-lg font-bold ${colors.text}`}>{weeklyCompletedCount}</div><div className={`text-[10px] ${colors.textSec}`}>Biten</div></div><div className={`${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} p-2 rounded text-center`}><div className={`text-lg font-bold ${colors.textSec}`}>{weeklyTaskCount - weeklyCompletedCount}</div><div className={`text-[10px] ${colors.textSec}`}>Kalan</div></div></div></Card></div>
-      {student.pastWeeks?.length > 0 && (<Card title="Geçmiş Haftalar Arşivi" className="mt-8"><div className="space-y-4">{student.pastWeeks.map(week => (<div key={week.id} className={`${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} p-4 rounded-lg flex justify-between items-center`}><div><div className={`font-bold ${colors.text} text-sm`}>Hafta: {week.date}</div><div className={`text-xs ${colors.textSec}`}>{week.assignments.length} Görev Planlandı</div></div><div className="text-right flex items-center gap-4"><div className="text-orange-400 font-bold">{week.solvedCount} Soru Çözüldü</div>{isAdmin && (<button onClick={() => handleDeleteArchive(week.id)} className="text-red-500 hover:bg-red-500/10 p-2 rounded transition-colors"><Trash2 size={16}/></button>)}</div></div>))}</div></Card>)}
+      
+       {student.pastWeeks?.length > 0 && (
+        <Card title="Geçmiş Haftalar Arşivi" className="mt-8">
+            <div className="space-y-4">
+                {student.pastWeeks.map(week => (
+                    <div key={week.id} className={`${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} rounded-lg overflow-hidden`}>
+                        <div className="p-4 flex justify-between items-center cursor-pointer" onClick={() => setExpandedArchive(expandedArchive === week.id ? null : week.id)}>
+                            <div className="flex items-center gap-3">
+                                {expandedArchive === week.id ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
+                                <div>
+                                    <div className={`font-bold ${colors.text} text-sm`}>Hafta: {week.date}</div>
+                                    <div className={`text-xs ${colors.textSec}`}>{week.assignments?.length || 0} Görev Planlandı</div>
+                                </div>
+                            </div>
+                            <div className="text-right flex items-center gap-4">
+                                <div className="text-orange-400 font-bold">{week.solvedCount} Soru Çözüldü</div>
+                                {isAdmin && (
+                                    <button onClick={(e) => { e.stopPropagation(); handleDeleteArchive(week.id); }} className="text-red-500 hover:bg-red-500/10 p-2 rounded transition-colors">
+                                        <Trash2 size={16}/>
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                        
+                        {/* Arşiv Detay Görünümü */}
+                        {expandedArchive === week.id && week.assignments && (
+                            <div className={`p-4 border-t ${colors.border} ${colors.isDark ? 'bg-slate-900/50' : 'bg-white/50'}`}>
+                                <table className="w-full text-left text-xs">
+                                    <thead className={colors.textSec}>
+                                        <tr>
+                                            <th className="p-2">Gün</th>
+                                            <th className="p-2">Ders/Konu</th>
+                                            <th className="p-2">Tip</th>
+                                            <th className="p-2 text-right">Durum</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className={colors.text}>
+                                        {week.assignments.map(a => (
+                                            <tr key={a.id} className={`border-b ${colors.border} last:border-0`}>
+                                                <td className="p-2 font-medium">{DAYS.find(d=>d.id === a.day)?.label}</td>
+                                                <td className="p-2">
+                                                    <div className="font-bold text-orange-400">{a.subject}</div>
+                                                    <div className={colors.textSec}>{a.topic}</div>
+                                                </td>
+                                                <td className="p-2">{TASK_TYPES.find(t=>t.id === a.type)?.label}</td>
+                                                <td className="p-2 text-right">
+                                                    {a.status === 'completed' ? <span className="text-emerald-500 font-bold">Tamamlandı</span> : <span className="text-red-400">Yapılmadı</span>}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+                ))}
+            </div>
+        </Card>
+      )}
     </div>
   );
 };
@@ -603,6 +830,7 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user }) => {
 const GoalsModule = ({ student, onUpdateStudent, user }) => {
   const [showModal, setShowModal] = useState(false); const [editingId, setEditingId] = useState(null); const [form, setForm] = useState({ text: '', target: '', days: [] });
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [isEditMode, setIsEditMode] = useState(false);
   const colors = useThemeColors();
   const goals = student.goals || [];
   const isAdmin = user.role === 'admin' || user.role === 'superadmin';
@@ -614,9 +842,33 @@ const GoalsModule = ({ student, onUpdateStudent, user }) => {
   const handleEdit = (goal) => { setForm({ text: goal.text, target: goal.target, days: goal.days }); setEditingId(goal.id); setShowModal(true); };
   const toggleGoalStatus = (goalId, dayId) => { const goal = goals.find(g => g.id === goalId); const key = `${goalId}-${dayId}`; const newStatus = { ...goal.status, [key]: !goal.status[key] }; onUpdateStudent({ ...student, goals: goals.map(g => g.id === goalId ? { ...g, status: newStatus } : g) }); };
   
+  // YENİ ÖZELLİKLER: HAFTAYI SIFIRLA VE SİL
+  const handleResetWeek = () => {
+    if(!window.confirm("Bu haftaki tüm hedeflerin tamamlanma durumu sıfırlanacak. Onaylıyor musunuz?")) return;
+    const resetGoals = goals.map(g => ({ ...g, status: {} })); // Status objesini temizle
+    onUpdateStudent({ ...student, goals: resetGoals });
+  };
+
+  const handleDeleteWeek = () => {
+    if(!window.confirm("DİKKAT: Bu haftanın TÜM hedefleri kalıcı olarak silinecek! Onaylıyor musunuz?")) return;
+    onUpdateStudent({ ...student, goals: [] });
+  };
+
   return (
     <div className="space-y-8 animate-fade-in">
-      <div className="flex justify-between items-center"><h2 className={`text-2xl font-bold ${colors.text}`}>Haftalık Hedef Takibi</h2>{isAdmin && <Button icon={Plus} onClick={() => setShowModal(true)}>Yeni Hedef Ekle</Button>}</div>
+      <div className="flex justify-between items-center">
+          <h2 className={`text-2xl font-bold ${colors.text}`}>Haftalık Hedef Takibi</h2>
+          <div className="flex gap-2">
+            {isAdmin && <Button variant="ghost" onClick={() => setIsEditMode(!isEditMode)} icon={Settings} className={isEditMode ? 'text-orange-500 bg-orange-500/10' : ''} />}
+            {isAdmin && <Button icon={Plus} onClick={() => setShowModal(true)}>Yeni Hedef</Button>}
+            {isAdmin && isEditMode && (
+                <>
+                    <Button size="small" variant="secondary" onClick={handleResetWeek} icon={RefreshCw}>Haftayı Sıfırla</Button>
+                    <Button size="small" variant="danger" onClick={handleDeleteWeek} icon={Trash2}>Haftayı Sil</Button>
+                </>
+            )}
+          </div>
+      </div>
       <div className="flex overflow-x-auto gap-4 pb-4 md:grid md:grid-cols-7 md:overflow-visible">
         {DAYS.map(day => {
           const dailyGoals = goals.filter(g => g.days.includes(day.id));
@@ -629,7 +881,15 @@ const GoalsModule = ({ student, onUpdateStudent, user }) => {
                   return (
                     <div key={goal.id} className={`p-3 rounded-lg border text-xs relative group ${colors.shadow} ${isCompleted ? 'bg-emerald-900/20 border-emerald-900/50' : `${colors.bgCard} ${colors.border}`}`}>
                       <div className="font-bold text-orange-400 mb-1">{goal.text}</div>{goal.target && (<div className="text-xs text-emerald-500 mb-2 flex items-center gap-1.5 bg-emerald-500/10 py-1 px-2 rounded w-fit mt-1"><Target size={12}/> <span className="font-medium">{goal.target}</span></div>)}
-                      <div className={`absolute top-2 right-2 flex gap-1 ${colors.isDark ? 'bg-slate-900/50' : 'bg-white/50'} rounded px-1`}>{isAdmin && <button onClick={() => handleEdit(goal)} className="text-slate-500 hover:text-blue-400 p-2"><Edit2 size={12}/></button>}{!isStudent && <button onClick={(e) => requestDelete(e, goal.id)} className="text-slate-500 hover:text-red-500 p-2"><Trash2 size={12}/></button>}</div>
+                      
+                      {/* EDIT MODE CONTROL */}
+                      {(isAdmin && isEditMode) && (
+                        <div className={`absolute top-2 right-2 flex gap-1 ${colors.isDark ? 'bg-slate-900/50' : 'bg-white/50'} rounded px-1`}>
+                            <button onClick={() => handleEdit(goal)} className="text-slate-500 hover:text-blue-400 p-2"><Edit2 size={12}/></button>
+                            <button onClick={(e) => requestDelete(e, goal.id)} className="text-slate-500 hover:text-red-500 p-2"><Trash2 size={12}/></button>
+                        </div>
+                      )}
+
                       <button onClick={() => toggleGoalStatus(goal.id, day.id)} className={`w-full py-2 rounded flex items-center justify-center gap-1 ${isCompleted ? 'bg-emerald-600 text-white' : `${colors.isDark ? 'bg-slate-700 text-slate-400 hover:bg-slate-600' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'}`}`}>{isCompleted ? <Check size={14}/> : 'Yapıldı'}</button>
                     </div>
                   );
@@ -777,16 +1037,22 @@ if (user.role === 'student') return <div className={`${colors.text} text-center 
   const handleEdit = (mood) => { setEditingId(mood.id); setFormData({ date: mood.date, metrics: { ...mood.metrics } }); window.scrollTo(0,0); };
   const requestDelete = (e, id) => { e.stopPropagation(); e.preventDefault(); setDeleteConfirm(id); };
   const confirmDelete = () => { if (deleteConfirm) { const filtered = student.moods.filter(m => m.id !== deleteConfirm); onUpdateStudent({ ...student, moods: filtered }); setDeleteConfirm(null); } };
-  const sortedMoods = [...student.moods].sort((a,b) => new Date(a.date) - new Date(b.date)); const flatData = sortedMoods.map(m => {
-    // 1. O günün tüm puanlarını (motivasyon, mutluluk vb.) al
-    const values = Object.values(m.metrics);
-    // 2. Hepsini topla ve sayı adedine böl (Ortalama hesapla)
+  const sortedMoods = [...student.moods].sort((a,b) => new Date(a.date) - new Date(b.date)); 
+  
+  // LOGIC UPDATE: Composite score calculation excluding Stress Factors
+  const flatData = sortedMoods.map(m => {
+    // Exclude examAnxiety and lessonAnxiety from the average calculation
+    const { examAnxiety, lessonAnxiety, ...positiveMetrics } = m.metrics;
+    const values = Object.values(positiveMetrics);
+    
+    // Calculate average only from positive/neutral indicators
     const average = values.reduce((a, b) => a + b, 0) / values.length;
-    // 3. Tarihi, diğer verileri ve hesapladığımız ortalamayı pakete koy
+    
     return { date: m.date.substring(5), ...m.metrics, average: average };
   });
+
   return (
-    <div className="space-y-8 animate-fade-in"><Card title={editingId ? "Duygudurum Düzenle" : "Yeni Duygudurum Girişi"} action={<div className="flex gap-4 items-center"><input type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className={`${colors.inputBg} border ${colors.inputBorder} ${colors.text} p-2 rounded text-sm`}/><Button onClick={handleSave}>{editingId ? 'Güncelle' : 'Kaydet'}</Button></div>}><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">{METRICS_CONFIG.map(m => (<div key={m.key} className={`${colors.bgCardTransparent} p-4 rounded-lg border ${colors.border}`}><label className={`block text-sm ${colors.textSec} mb-2 font-medium`}>{m.label}</label><div className="flex items-center gap-3"><input type="range" min="0" max="100" value={formData.metrics[m.key]} onChange={e => setFormData({...formData, metrics: {...formData.metrics, [m.key]: parseInt(e.target.value)}})} className={`w-full accent-orange-500 h-2 ${colors.isDark ? 'bg-slate-700' : 'bg-slate-200'} rounded-lg appearance-none cursor-pointer`}/><span className={`${colors.text} font-bold w-10 text-right`}>{formData.metrics[m.key]}%</span></div></div>))}</div></Card><Card title="Kompozit Analiz (Genel Bakış)"><div className="h-64"><LineChart data={flatData} dataKey="average" labelKey="date" color="#3b82f6" /></div></Card><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">{METRICS_CONFIG.map(metric => (<Card key={metric.key} title={metric.label} className="!p-4"><div className="h-40"><LineChart data={flatData} dataKey={metric.key} labelKey="date" color={metric.color} height={160} /></div></Card>))}</div><Card title="Geçmiş Kayıtlar"><div className="overflow-x-auto"><table className={`w-full text-left text-sm ${colors.textSec}`}><thead className={colors.tableHeader}><tr><th className="p-4">Tarih</th>{METRICS_CONFIG.map(m => <th key={m.key} className="p-4">{m.label}</th>)}<th className="p-4">İşlem</th></tr></thead><tbody className={colors.divider}>{student.moods.sort((a,b)=> new Date(b.date)-new Date(a.date)).map(mood => (<tr key={mood.id} className={`border-b ${colors.border}`}><td className="p-4">{mood.date}</td>{METRICS_CONFIG.map(m => <td key={m.key} className="p-4 text-center">{mood.metrics[m.key]}</td>)}<td className="p-4 flex gap-2"><button onClick={() => handleEdit(mood)}><Edit2 size="14" className="text-blue-400"/></button><button onClick={(e) => requestDelete(e, mood.id)} className="hover:text-red-500"><Trash2 size="14" className="text-red-400"/></button></td></tr>))}</tbody></table></div></Card>
+    <div className="space-y-8 animate-fade-in"><Card title={editingId ? "Duygudurum Düzenle" : "Yeni Duygudurum Girişi"} action={<div className="flex gap-4 items-center"><input type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className={`${colors.inputBg} border ${colors.inputBorder} ${colors.text} p-2 rounded text-sm`}/><Button onClick={handleSave}>{editingId ? 'Güncelle' : 'Kaydet'}</Button></div>}><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">{METRICS_CONFIG.map(m => (<div key={m.key} className={`${colors.bgCardTransparent} p-4 rounded-lg border ${colors.border}`}><label className={`block text-sm ${colors.textSec} mb-2 font-medium`}>{m.label}</label><div className="flex items-center gap-3"><input type="range" min="0" max="100" value={formData.metrics[m.key]} onChange={e => setFormData({...formData, metrics: {...formData.metrics, [m.key]: parseInt(e.target.value)}})} className={`w-full accent-orange-500 h-2 ${colors.isDark ? 'bg-slate-700' : 'bg-slate-200'} rounded-lg appearance-none cursor-pointer`}/><span className={`${colors.text} font-bold w-10 text-right`}>{formData.metrics[m.key]}%</span></div></div>))}</div></Card><Card title="Kompozit Analiz (Stres Faktörleri Hariç)"><div className="h-64"><LineChart data={flatData} dataKey="average" labelKey="date" color="#3b82f6" /></div></Card><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">{METRICS_CONFIG.map(metric => (<Card key={metric.key} title={metric.label} className="!p-4"><div className="h-40"><LineChart data={flatData} dataKey={metric.key} labelKey="date" color={metric.color} height={160} /></div></Card>))}</div><Card title="Geçmiş Kayıtlar"><div className="overflow-x-auto"><table className={`w-full text-left text-sm ${colors.textSec}`}><thead className={colors.tableHeader}><tr><th className="p-4">Tarih</th>{METRICS_CONFIG.map(m => <th key={m.key} className="p-4">{m.label}</th>)}<th className="p-4">İşlem</th></tr></thead><tbody className={colors.divider}>{student.moods.sort((a,b)=> new Date(b.date)-new Date(a.date)).map(mood => (<tr key={mood.id} className={`border-b ${colors.border}`}><td className="p-4">{mood.date}</td>{METRICS_CONFIG.map(m => <td key={m.key} className="p-4 text-center">{mood.metrics[m.key]}</td>)}<td className="p-4 flex gap-2"><button onClick={() => handleEdit(mood)}><Edit2 size="14" className="text-blue-400"/></button><button onClick={(e) => requestDelete(e, mood.id)} className="hover:text-red-500"><Trash2 size="14" className="text-red-400"/></button></td></tr>))}</tbody></table></div></Card>
     <DeleteConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={confirmDelete} />
     </div>
   );
@@ -866,7 +1132,11 @@ const LoginScreen = ({ onLogin, students, admins, isFirebase, isLoading }) => {
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4"><div className="bg-slate-900 p-8 rounded-2xl w-full max-w-md border border-slate-800 shadow-2xl relative">
         {!isFirebase && <div className="absolute top-2 right-2 bg-yellow-500/20 text-yellow-500 text-[10px] px-2 py-1 rounded border border-yellow-500/30 flex items-center gap-1"><CloudOff size={12}/> Demo Modu</div>}
         {isFirebase && <div className="absolute top-2 right-2 bg-emerald-500/20 text-emerald-500 text-[10px] px-2 py-1 rounded border border-emerald-500/30 flex items-center gap-1"><Cloud size={12}/> Canlı Bağlantı</div>}
-        <div className="text-center mb-8"><h1 className="text-2xl font-bold text-white mb-1">Hamza Metehan Kılıç</h1><p className="text-orange-500 text-sm mb-4 font-medium">Uzman Psikolojik Danışman</p><p className="text-slate-500 text-xs">Giriş Yapın</p></div><div className="flex bg-slate-800 p-1 rounded-lg mb-6"><button onClick={() => {setActiveTab('admin'); setError(''); setPassword('');}} className={`flex-1 py-2 rounded-md text-sm font-bold transition-all ${activeTab === 'admin' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`}>Yönetici / Öğretmen</button><button onClick={() => {setActiveTab('student'); setError(''); setPassword('');}} className={`flex-1 py-2 rounded-md text-sm font-bold transition-all ${activeTab === 'student' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`}>Öğrenci</button></div><div className="space-y-4"><Input label="Kullanıcı Adı" value={username} onChange={e => setUsername(e.target.value)} /><Input label="Şifre" type="password" placeholder="••••••" value={password} onChange={e => setPassword(e.target.value)} />{error && <div className="p-3 bg-red-500/10 border border-red-500/20 rounded text-red-400 text-sm text-center">{error}</div>}<Button size="large" className="w-full" onClick={handleLogin}>Giriş Yap</Button></div></div></div>
+        <div className="text-center mb-8">
+            <h1 className="text-2xl font-bold text-white mb-2">Profesyonel Koçluk Programı</h1>
+            <p className="text-slate-500 text-xs">Uzm. Psikolojik Danışman Hamza Metehan Kılıç tarafından geliştirilmiştir.</p>
+        </div>
+        <div className="flex bg-slate-800 p-1 rounded-lg mb-6"><button onClick={() => {setActiveTab('admin'); setError(''); setPassword('');}} className={`flex-1 py-2 rounded-md text-sm font-bold transition-all ${activeTab === 'admin' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`}>Yönetici / Öğretmen</button><button onClick={() => {setActiveTab('student'); setError(''); setPassword('');}} className={`flex-1 py-2 rounded-md text-sm font-bold transition-all ${activeTab === 'student' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`}>Öğrenci</button></div><div className="space-y-4"><Input label="Kullanıcı Adı" value={username} onChange={e => setUsername(e.target.value)} /><Input label="Şifre" type="password" placeholder="••••••" value={password} onChange={e => setPassword(e.target.value)} />{error && <div className="p-3 bg-red-500/10 border border-red-500/20 rounded text-red-400 text-sm text-center">{error}</div>}<Button size="large" className="w-full" onClick={handleLogin}>Giriş Yap</Button></div></div></div>
   );
 };
 
