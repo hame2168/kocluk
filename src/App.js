@@ -249,14 +249,17 @@ const DeleteConfirmModal = ({ isOpen, onClose, onConfirm, message = "Bu öğeyi 
 };
 
 // maxValue eklendi: Grafiğin tavan değerini dışarıdan belirlememizi sağlar.
-const LineChart = ({ data, dataKey, labelKey, color = "#f97316", height = 200, showDots = true, strokeWidth = 3, maxValue = null }) => {
+// --- GELİŞMİŞ GRAFİK BİLEŞENİ (Area Chart + Dinamik Ölçek) ---
+const LineChart = ({ data, dataKey, labelKey, color = "#f97316", height = 200, showDots = true, strokeWidth = 3 }) => {
   const colors = useThemeColors();
   if (!data || data.length < 2) return <div className={`flex items-center justify-center ${colors.textSec} text-sm h-full`}>Veri yetersiz</div>;
   
-  // Eğer özel bir tavan değeri (örn: 5 soru) verildiyse onu kullan, yoksa veriye göre otomatik esne (x1.1)
+  // TAVAN AYARI: Grafiği artık 40 soruya göre değil, öğrencinin yaptığı MAX nete göre ölçekliyoruz.
   const calculatedMax = Math.max(...data.map(d => Number(d[dataKey])));
-  const maxVal = maxValue ? Math.max(maxValue, calculatedMax) : (calculatedMax * 1.1 || 10);
-  const width = 1000; const padding = 40;
+  const maxVal = (calculatedMax * 1.15) || 10; // En yüksek değerin %15 fazlasını tavan yap
+  
+  const width = 1000;
+  const padding = 20; // Kenar boşluklarını azalttık
   
   const points = data.map((d, i) => {
     const x = (i / (data.length - 1)) * (width - 2 * padding) + padding;
@@ -265,34 +268,38 @@ const LineChart = ({ data, dataKey, labelKey, color = "#f97316", height = 200, s
   });
 
   const pathD = svgPath(points, bezierCommand);
+  
+  // Alt Alanı Doldurma (Gradient Efekti İçin Yol)
+  const fillPathD = `
+    ${pathD} 
+    L ${width - padding},${height - padding} 
+    L ${padding},${height - padding} 
+    Z
+  `;
 
   return (
     <div className="w-full h-full relative" style={{ height: height }}>
       <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible">
-        {/* Grid Lines */}
-        {[0, 0.25, 0.5, 0.75, 1].map(p => { 
+        <defs>
+          <linearGradient id={`gradient-${color}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.3" />
+            <stop offset="100%" stopColor={color} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {[0, 0.5, 1].map(p => { 
           const y = height - padding - (p * (height - 2*padding)); 
-          return <line key={p} x1={padding} y1={y} x2={width-padding} y2={y} stroke={colors.chartGrid} strokeWidth="1" strokeDasharray="4" />; 
+          return <line key={p} x1={padding} y1={y} x2={width-padding} y2={y} stroke={colors.chartGrid} strokeWidth="1" strokeDasharray="4" opacity="0.5" />; 
         })}
-        {/* Path */}
+        <path d={fillPathD} fill={`url(#gradient-${color})`} stroke="none" />
         <path d={pathD} fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-        {/* Dots & Labels */}
         {showDots && data.map((d, i) => {
           const [x, y] = points[i];
           return (
             <g key={i} className="group">
-              <circle cx={x} cy={y} r="6" fill={colors.isDark ? "#1e293b" : "#ffffff"} stroke={color} strokeWidth="2" className="transition-all duration-300 group-hover:r-8" />
-              {/* Değerleri Net Gösteren Yapı (Revize Edildi) */}
-              {/* Arkaplan 'Halo' efekti için stroke */}
-              <text x={x} y={y - 20} textAnchor="middle" stroke={colors.bgCard} strokeWidth="4" fontSize="16" fontWeight="900" paintOrder="stroke" className="select-none">
-                 {Number(d[dataKey]).toFixed(1)}
-              </text>
-              {/* Asıl Metin */}
-              <text x={x} y={y - 20} textAnchor="middle" fill={color} fontSize="16" fontWeight="900" className="select-none filter drop-shadow-md">
-                {Number(d[dataKey]).toFixed(1)}
-              </text>
-              {/* X Ekseni Etiketi */}
-              <text x={x} y={height - 10} textAnchor="middle" fill={colors.textSec} fontSize="11" fontWeight="bold">{d[labelKey]}</text>
+              <circle cx={x} cy={y} r="4" fill={colors.bgCard} stroke={color} strokeWidth="2" className="transition-all duration-300 group-hover:r-6" />
+              <text x={x} y={y - 15} textAnchor="middle" stroke={colors.bgCard} strokeWidth="3" fontSize="14" fontWeight="bold" paintOrder="stroke" className="select-none">{Number(d[dataKey]).toFixed(1)}</text>
+              <text x={x} y={y - 15} textAnchor="middle" fill={color} fontSize="14" fontWeight="bold" className="select-none">{Number(d[dataKey]).toFixed(1)}</text>
+              <text x={x} y={height + 15} textAnchor="middle" fill={colors.textSec} fontSize="10">{d[labelKey]}</text>
             </g>
           );
         })}
@@ -681,7 +688,7 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user }) => {
   const assignments = student.assignments || [];
   
   // İstatistiklerde opsiyonel 'count' değerini güvenli parse etme
-  const weeklySolvedQuestions = assignments.filter(a => a.type === 'soru' && a.status === 'completed').reduce((acc, curr) => acc + (parseInt(curr.count) || 0), 0);
+  const weeklySolvedQuestions = assignments.filter(a => (a.type === 'soru' || a.count) && a.status === 'completed').reduce((acc, curr) => acc + (parseInt(curr.count) || 0), 0);
   const weeklyTaskCount = assignments.length;
   const weeklyCompletedCount = assignments.filter(a => a.status === 'completed').length;
   const completionRate = weeklyTaskCount > 0 ? Math.round((weeklyCompletedCount / weeklyTaskCount) * 100) : 0;
@@ -798,7 +805,7 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user }) => {
       const dayTasks = assignments.filter(a => a.day === dayId); 
       return { 
           topic: dayTasks.filter(t => t.type === 'konu').length, 
-          question: dayTasks.filter(t => t.type === 'soru').reduce((acc, curr) => acc + (parseInt(curr.count) || 0), 0), 
+          question: dayTasks.filter(t => t.type === 'soru' || t.count).reduce((acc, curr) => acc + (parseInt(curr.count) || 0), 0), 
           repeat: dayTasks.filter(t => t.type === 'tekrar').length, 
           exam: dayTasks.filter(t => t.type === 'deneme').length 
       }; 
@@ -897,7 +904,7 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user }) => {
                         </div>
                     )}
 
-                    </div><div className={`${colors.text} mt-1 text-sm font-medium line-clamp-2`}>{task.topic}</div><div className="mt-2 flex flex-col gap-1"><div className={`flex justify-between items-center text-xs ${colors.textSec}`}><span className={`${colors.isDark ? 'bg-slate-700/50' : 'bg-slate-200'} px-1.5 py-0.5 rounded`}>{TASK_TYPES.find(t=>t.id === task.type)?.label}</span>{task.type === 'soru' && task.count && <span className="font-bold text-orange-400">{task.count} Soru</span>}</div>{task.source && (<div className="flex items-center gap-1 text-xs text-blue-400 mt-0.5"><Book size={10} /><span className="truncate">{task.source}</span></div>)}</div>
+                    </div><div className={`${colors.text} mt-1 text-sm font-medium line-clamp-2`}>{task.topic}</div><div className="mt-2 flex flex-col gap-1"><div className={`flex justify-between items-center text-xs ${colors.textSec}`}><span className={`${colors.isDark ? 'bg-slate-700/50' : 'bg-slate-200'} px-1.5 py-0.5 rounded`}>{TASK_TYPES.find(t=>t.id === task.type)?.label}</span>{task.count && <span className="font-bold text-orange-400">{task.count} Soru</span>}</div>{task.source && (<div className="flex items-center gap-1 text-xs text-blue-400 mt-0.5"><Book size={10} /><span className="truncate">{task.source}</span></div>)}</div>
                     
                     {task.note && (
                         <div className={`mt-2 pt-2 border-t ${colors.border} text-[10px] ${colors.textSec} italic`}>
@@ -1637,7 +1644,7 @@ const PaymentModule = ({ student, onUpdateStudent, user }) => {
    if (user.role === 'student') return <div className={`${colors.text} text-center mt-20`}>Bu alana erişim yetkiniz yok.</div>;
   const totalPaid = student.payments.reduce((acc, curr) => acc + Number(curr.amount), 0);
   return (
-    <div className="animate-fade-in space-y-6"><div className="flex justify-between items-center"><h2 className={`text-2xl font-bold ${colors.text}`}>Ödeme Takibi</h2><Button onClick={() => setShowModal(true)} icon={Plus}>Ödeme Ekle</Button></div><div className="grid grid-cols-1 md:grid-cols-3 gap-6"><Card className={`border-l-4 border-l-emerald-500 ${colors.bgCard}`}><div className={`${colors.textSec} text-xs uppercase font-bold mb-2`}>Toplam Tahsilat</div><div className={`text-3xl font-bold ${colors.text}`}>{totalPaid.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}</div></Card><Card className={`border-l-4 border-l-blue-500 ${colors.bgCard}`}><div className={`${colors.textSec} text-xs uppercase font-bold mb-2`}>Son İşlem</div><div className={`text-xl font-bold ${colors.text}`}>{student.payments[0]?.date || '-'}</div></Card></div><Card title="Ödeme Geçmişi"><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className={colors.tableHeader}><tr><th className="p-4">Tarih</th><th className="p-4">Açıklama</th><th className="p-4">Yöntem</th><th className="p-4 text-right">Tutar</th><th className="p-4 text-right">İşlem</th></tr></thead><tbody className={`divide-y ${colors.divider} ${colors.textSec}`}>{student.payments.map(p => (<tr key={p.id} className={colors.hoverBg}><td className="p-4">{p.date}</td><td className={`p-4 font-medium ${colors.text}`}>{p.description}</td><td className="p-4"><span className={`${colors.isDark ? 'bg-slate-800' : 'bg-slate-200'} px-2 py-1 rounded text-xs`}>{p.method}</span></td><td className="p-4 text-right font-bold text-emerald-400">{Number(p.amount).toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}</td><td className="p-4 text-right"><button onClick={(e) => requestDelete(e, p.id)} className="text-slate-500 hover:text-red-500 p-2"><Trash2 size={16}/></button></td></tr>))}{student.payments.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-slate-500">Ödeme kaydı bulunamadı.</td></tr>}</tbody></table></div></Card>{showModal && (<Modal title="Yeni Ödeme Alındısı" onClose={() => setShowModal(false)}><div className="space-y-4"><Input label="Tarih" type="date" value={newPayment.date} onChange={e => setNewPayment({...newPayment, date: e.target.value})} /><Input label="Tutar (TL)" type="number" value={newPayment.amount} onChange={e => setNewPayment({...newPayment, amount: e.target.value})} /><Input label="Açıklama" placeholder="Örn: Kasım 2025 Koçluk Ücreti" value={newPayment.description} onChange={e => setNewPayment({...newPayment, description: e.target.value})} /><div><label className={`block text-xs font-medium ${colors.textSec} mb-2 uppercase`}>Ödeme Yöntemi</label><select className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg p-3 ${colors.text} focus:border-orange-500 outline-none`} value={newPayment.method} onChange={e => setNewPayment({...newPayment, method: e.target.value})}><option>Nakit</option><option>Havale/EFT</option><option>Kredi Kartı</option></select></div><Button onClick={handleAdd} className="w-full mt-4">Kaydet</Button></div></Modal>)}
+    <div className="animate-fade-in space-y-6"><div className="flex justify-between items-center"><h2 className={`text-2xl font-bold ${colors.text}`}>Ödeme Takibi</h2><Button onClick={() => setShowModal(true)} icon={Plus}>Ödeme Ekle</Button></div><div className="grid grid-cols-1 md:grid-cols-3 gap-6"><Card className={`border-l-4 border-l-emerald-500 ${colors.bgCard}`}><div className={`${colors.textSec} text-xs uppercase font-bold mb-2`}>Toplam Tahsilat</div><div className={`text-3xl font-bold ${colors.text}`}>{totalPaid.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}</div></Card><Card className={`border-l-4 border-l-blue-500 ${colors.bgCard}`}><div className={`${colors.textSec} text-xs uppercase font-bold mb-2`}>Son İşlem</div><div className={`text-xl font-bold ${colors.text}`}>{student.payments[0]?.date || '-'}</div></Card></div><Card title="Ödeme Geçmişi"><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className={colors.tableHeader}><tr><th className="p-4">Tarih</th><th className="p-4">Açıklama</th><th className="p-4">Yöntem</th><th className="p-4 text-right">Tutar</th><th className="p-4 text-right">İşlem</th></tr></thead><tbody className={`divide-y ${colors.divider} ${colors.textSec}`}>{student.payments.map(p => (<tr key={p.id} className={colors.hoverBg}><td className="p-4">{formatDate(p.date)}</td><td className={`p-4 font-medium ${colors.text}`}>{p.description}</td><td className="p-4"><span className={`${colors.isDark ? 'bg-slate-800' : 'bg-slate-200'} px-2 py-1 rounded text-xs`}>{p.method}</span></td><td className="p-4 text-right font-bold text-emerald-400">{Number(p.amount).toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}</td><td className="p-4 text-right"><button onClick={(e) => requestDelete(e, p.id)} className="text-slate-500 hover:text-red-500 p-2"><Trash2 size={16}/></button></td></tr>))}{student.payments.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-slate-500">Ödeme kaydı bulunamadı.</td></tr>}</tbody></table></div></Card>{showModal && (<Modal title="Yeni Ödeme Alındısı" onClose={() => setShowModal(false)}><div className="space-y-4"><Input label="Tarih" type="date" value={newPayment.date} onChange={e => setNewPayment({...newPayment, date: e.target.value})} /><Input label="Tutar (TL)" type="number" value={newPayment.amount} onChange={e => setNewPayment({...newPayment, amount: e.target.value})} /><Input label="Açıklama" placeholder="Örn: Kasım 2025 Koçluk Ücreti" value={newPayment.description} onChange={e => setNewPayment({...newPayment, description: e.target.value})} /><div><label className={`block text-xs font-medium ${colors.textSec} mb-2 uppercase`}>Ödeme Yöntemi</label><select className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg p-3 ${colors.text} focus:border-orange-500 outline-none`} value={newPayment.method} onChange={e => setNewPayment({...newPayment, method: e.target.value})}><option>Nakit</option><option>Havale/EFT</option><option>Kredi Kartı</option></select></div><Button onClick={handleAdd} className="w-full mt-4">Kaydet</Button></div></Modal>)}
     <DeleteConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={confirmDelete} />
     </div>
   );
