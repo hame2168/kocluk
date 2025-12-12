@@ -726,19 +726,25 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user }) => {
     if(!quickForm.text) return alert("Görev içeriği giriniz.");
     if(quickForm.days.length === 0) return alert("En az bir gün seçiniz.");
     
-   const newAssignment = { 
+    // 1. Mevcut ödev listesinin bir kopyasını al
+    let newAssignments = [...assignments];
+
+    // 2. Seçilen her gün için döngü kurarak görev ekle
+    quickForm.days.forEach(day => {
+        const newAssignment = { 
             id: Date.now() + Math.random(), 
             status: 'pending', 
             subject: 'Ek Görev', 
             topic: quickForm.text, 
             day: day, 
             type: 'ozel', 
-            count: quickForm.count,   // Formdan gelen soru sayısı
-            source: quickForm.source  // Formdan gelen kaynak
+            count: quickForm.count,   
+            source: quickForm.source  
         };
         newAssignments.push(newAssignment);
     });
 
+    // 3. Öğrenci verisini güncelle
     onUpdateStudent({ ...student, assignments: newAssignments });
     setShowQuickModal(false);
     setQuickForm({ text: '', days: [], count: '', source: '' });
