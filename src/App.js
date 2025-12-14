@@ -4,10 +4,10 @@ import {
   ChevronRight, User, Lock, Check, Edit2, Save, X, Calendar, ChevronDown, BarChart2, ArrowUp, ArrowDown, 
   Activity, Award, Clock, List, Book, RefreshCw, Zap, 
   Library, CheckCircle, Flag, Phone, GraduationCap, 
-  Play, Pause, RotateCcw, Timer, Menu, CloudOff, Cloud, Shield, Sun, Moon, Settings
+  Play, Pause, RotateCcw, Timer, Menu, CloudOff, Cloud, Shield, Eye, Sun, Moon, Settings
 } from 'lucide-react';
 import { initializeApp } from "firebase/app";
-import { getFirestore, collection, addDoc, updateDoc, doc, deleteDoc, onSnapshot, query, setDoc } from "firebase/firestore";
+import { getFirestore, collection, addDoc, updateDoc, doc, deleteDoc, onSnapshot, query, setDoc, getDoc } from "firebase/firestore";
 
 // --- FIREBASE ENTEGRASYONU ---
 const FIREBASE_CONFIG = {
