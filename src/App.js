@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useRef, useContext, createContext } from 'react';
 import { 
   Layout, Users, BookOpen, Target, Smile, MessageSquare, CreditCard, LogOut, Plus, Trash2, 
-  ChevronRight, User, Lock, Check, Edit2, Save, X, Calendar, Filter, ChevronDown, BarChart2, ArrowUp, ArrowDown, 
-  PieChart, Activity, ArrowUpRight, TrendingUp, Award, Clock, List, Book, RefreshCw, Zap, 
-  Library, FileText, CheckCircle, Flag, Phone, GraduationCap, History, Star, Archive, AlertTriangle,
-  Play, Pause, RotateCcw, Timer, Menu, Database, CloudOff, Cloud, Shield, Key, Eye, Sun, Moon, Settings,
-  ZapOff, EyeOff
+  ChevronRight, User, Lock, Check, Edit2, Save, X, Calendar, ChevronDown, BarChart2, ArrowUp, ArrowDown, 
+  Activity, Award, Clock, List, Book, RefreshCw, Zap, 
+  Library, CheckCircle, Flag, Phone, GraduationCap, 
+  Play, Pause, RotateCcw, Timer, Menu, CloudOff, Cloud, Shield, Eye, Sun, Moon, Settings
 } from 'lucide-react';
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, addDoc, updateDoc, doc, deleteDoc, onSnapshot, query, setDoc, getDoc } from "firebase/firestore";
