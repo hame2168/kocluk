@@ -330,15 +330,13 @@ const DeleteConfirmModal = ({ isOpen, onClose, onConfirm, message = "Bu öğeyi 
   );
 };
 
-// --- YÖNETİCİ YÖNETİMİ (GÜNCELLENMİŞ: Kullanıcı Adı Çakışma Kontrolü) ---
+// --- YÖNETİCİ YÖNETİMİ (GÜNCELLENMİŞ: Hata Giderildi) ---
 const AdminManagementModule = ({ admins, setAdmins, user, allStudents, onInspectStudent, notifications, setNotifications }) => {
   const [showModal, setShowModal] = useState(false);
   const [editingAdmin, setEditingAdmin] = useState(null);
   const [form, setForm] = useState({ name: '', username: '', password: '', startDate: '', endDate: '', studentLimit: 20 });
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [expandedAdminId, setExpandedAdminId] = useState(null);
-  
-  // BİLDİRİM STATE
   const [notificationMsg, setNotificationMsg] = useState('');
   const [targetAudience, setTargetAudience] = useState('teachers');
 
@@ -363,22 +361,33 @@ const AdminManagementModule = ({ admins, setAdmins, user, allStudents, onInspect
     if (!form.name || !form.username || !form.password) return alert("Tüm alanları doldurunuz.");
     
     // ÇAKIŞMA KONTROLÜ
-    // 1. Adminler arasında ara (kendisi hariç)
     const adminExists = admins.some(a => a.username === form.username && a.id !== editingAdmin?.id);
-    // 2. Öğrenciler arasında ara
     const studentExists = allStudents.some(s => s.username === form.username);
 
     if (adminExists || studentExists) {
         return alert("Bu kullanıcı adı sistemde (öğrenci veya öğretmen olarak) kayıtlı. Lütfen farklı bir kullanıcı adı seçiniz.");
     }
 
-    const adminData = { ...form, studentLimit: parseInt(form.studentLimit) };
+    // GÜNCELLEME 4: Hata Giderildi (NaN kontrolü ve ID temizleme)
+    const limit = parseInt(form.studentLimit);
+    const safeLimit = isNaN(limit) ? 20 : limit;
+    
+    const adminData = { 
+        ...form, 
+        studentLimit: safeLimit 
+    };
 
     if (editingAdmin) {
        if (isFirebaseActive) { 
-           try { await setDoc(doc(db, "admins", editingAdmin.id), { ...adminData, id: undefined }, { merge: true }); } 
-           catch(e) { console.error(e); alert("Hata oluştu."); } 
-       } else { setAdmins(admins.map(a => a.id === editingAdmin.id ? { ...editingAdmin, ...adminData } : a)); }
+           try { 
+               // Firestore'a ID göndermemek için temiz bir obje oluştur
+               const { id, ...dataToUpdate } = adminData; 
+               await setDoc(doc(db, "admins", editingAdmin.id), dataToUpdate, { merge: true }); 
+           } 
+           catch(e) { console.error(e); alert("Hata oluştu: " + e.message); } 
+       } else { 
+           setAdmins(admins.map(a => a.id === editingAdmin.id ? { ...editingAdmin, ...adminData } : a)); 
+       }
     } else {
         const newAdmin = { ...adminData, role: 'admin' };
         if (isFirebaseActive) { 
@@ -473,8 +482,8 @@ const AdminManagementModule = ({ admins, setAdmins, user, allStudents, onInspect
   );
 };
 
-// 0. DASHBOARD (GÜNCELLENMİŞ: Öğrenci Kullanıcı Adı Kontrolü)
-const DashboardModule = ({ user, students, setStudents, setSelectedStudentId, onUpdateStudent, classes, setClasses, licenseInfo, admins }) => {
+// 0. DASHBOARD (GÜNCELLENMİŞ: Seçim İkonu & Mobil Menü)
+const DashboardModule = ({ user, students, setStudents, setSelectedStudentId, onUpdateStudent, classes, setClasses, licenseInfo, admins, setIsMobileMenuOpen, selectedStudentId }) => {
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({ name: '', grade: '', target: '', phone: '', school: '', username: '', password: '', classId: '' });
@@ -486,7 +495,6 @@ const DashboardModule = ({ user, students, setStudents, setSelectedStudentId, on
   const [selectedClassFilter, setSelectedClassFilter] = useState('ALL');
   const [showClassModal, setShowClassModal] = useState(false);
   const [newClassName, setNewClassName] = useState('');
-  // BİLDİRİM MODALI
   const [showNotifModal, setShowNotifModal] = useState(false);
   const [notifMsg, setNotifMsg] = useState('');
 
@@ -504,14 +512,11 @@ const DashboardModule = ({ user, students, setStudents, setSelectedStudentId, on
   const changeMode = (mode) => { setTimerMode(mode); resetTimer(mode); };
   const toggleTimer = () => setIsActive(!isActive);
 
-  // ÖĞRENCİ KAYIT & ÇAKIŞMA KONTROLÜ
+  // ÖĞRENCİ KAYIT
   const handleSave = async () => {
     if(!form.name || !form.username) return alert("Zorunlu alanları doldurun.");
     
-    // ÇAKIŞMA KONTROLÜ
-    // 1. Öğrenciler arasında ara (kendi düzenlemesi hariç)
     const studentExists = students.some(s => s.username === form.username && s.id !== editingId);
-    // 2. Adminler arasında ara
     const adminExists = admins.some(a => a.username === form.username);
 
     if (studentExists || adminExists) {
@@ -547,6 +552,14 @@ const DashboardModule = ({ user, students, setStudents, setSelectedStudentId, on
       return matchesSearch && student.classId === selectedClassFilter;
   });
 
+  const handleSelectStudent = (id) => {
+      setSelectedStudentId(id);
+      // GÜNCELLEME 1: Mobilde menüyü aç
+      if (window.innerWidth < 768) {
+          setIsMobileMenuOpen(true);
+      }
+  };
+
   if (user.role === 'student') {
      const s = students.find(s => s.id === user.id);
      if (!s) return <div>Yükleniyor...</div>;
@@ -574,15 +587,29 @@ const DashboardModule = ({ user, students, setStudents, setSelectedStudentId, on
          <div className="md:w-64"><select className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg px-4 py-3 ${colors.text} text-sm focus:outline-none focus:border-orange-500`} value={selectedClassFilter} onChange={e => setSelectedClassFilter(e.target.value)}><option value="ALL">Tüm Sınıflar</option>{classes && classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}<option value="NO_CLASS">Sınıfsızlar</option></select></div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredStudents.map(student => (
-              <div key={student.id} className={`${colors.bgCard} border ${colors.border} rounded-xl p-6 hover:border-orange-500/50 transition-all group relative ${colors.shadow}`}>
-                  <div className="flex items-start justify-between mb-4">
-                      <div className="flex items-center gap-4 cursor-pointer" onClick={() => setSelectedStudentId(student.id)}><div className={`w-16 h-16 bg-gradient-to-br ${colors.isDark ? 'from-slate-800 to-slate-700' : 'from-slate-200 to-slate-100'} rounded-full flex items-center justify-center text-2xl font-bold ${colors.text} border ${colors.border}`}>{student.name.charAt(0)}</div><div><h3 className={`text-lg font-bold ${colors.text} group-hover:text-orange-400 transition-colors`}>{student.name}</h3><div className={`text-sm ${colors.textSec}`}>{student.grade}</div><span className={`inline-block mt-1 text-[10px] px-2 py-0.5 rounded ${colors.isDark ? 'bg-blue-900/30 text-blue-400' : 'bg-blue-100 text-blue-600'}`}>{student.classId && classes.find(c => c.id === student.classId) ? classes.find(c => c.id === student.classId).name : 'Sınıfsız'}</span></div></div>
-                      <div className="flex gap-2"><button onClick={(e) => {e.stopPropagation(); handleEdit(student)}} className={`p-2 ${colors.textSec} hover:text-blue-400 ${colors.isDark ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-100 hover:bg-slate-200'} rounded-lg`}><Edit2 size={16}/></button><button onClick={(e) => {e.stopPropagation(); e.preventDefault(); setDeleteConfirm(student.id);}} className={`p-2 ${colors.textSec} hover:text-red-500 ${colors.isDark ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-100 hover:bg-slate-200'} rounded-lg`}><Trash2 size={16}/></button></div>
+          {filteredStudents.map(student => {
+              // GÜNCELLEME 1: Seçim Durumunu Kontrol Et
+              const isSelected = selectedStudentId === student.id;
+              return (
+                  <div key={student.id} className={`${colors.bgCard} border ${isSelected ? 'border-emerald-500' : colors.border} rounded-xl p-6 hover:border-orange-500/50 transition-all group relative ${colors.shadow}`}>
+                      <div className="flex items-start justify-between mb-4">
+                          <div className="flex items-center gap-4 cursor-pointer" onClick={() => handleSelectStudent(student.id)}>
+                              <div className={`w-16 h-16 bg-gradient-to-br ${colors.isDark ? 'from-slate-800 to-slate-700' : 'from-slate-200 to-slate-100'} rounded-full flex items-center justify-center text-2xl font-bold ${colors.text} border ${colors.border}`}>{student.name.charAt(0)}</div>
+                              <div><h3 className={`text-lg font-bold ${colors.text} group-hover:text-orange-400 transition-colors`}>{student.name}</h3><div className={`text-sm ${colors.textSec}`}>{student.grade}</div><span className={`inline-block mt-1 text-[10px] px-2 py-0.5 rounded ${colors.isDark ? 'bg-blue-900/30 text-blue-400' : 'bg-blue-100 text-blue-600'}`}>{student.classId && classes.find(c => c.id === student.classId) ? classes.find(c => c.id === student.classId).name : 'Sınıfsız'}</span></div>
+                          </div>
+                          <div className="flex gap-2"><button onClick={(e) => {e.stopPropagation(); handleEdit(student)}} className={`p-2 ${colors.textSec} hover:text-blue-400 ${colors.isDark ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-100 hover:bg-slate-200'} rounded-lg`}><Edit2 size={16}/></button><button onClick={(e) => {e.stopPropagation(); e.preventDefault(); setDeleteConfirm(student.id);}} className={`p-2 ${colors.textSec} hover:text-red-500 ${colors.isDark ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-100 hover:bg-slate-200'} rounded-lg`}><Trash2 size={16}/></button></div>
+                      </div>
+                      {/* GÜNCELLEME 1: Buton Stili ve İşlevi */}
+                      <Button className={`w-full ${isSelected ? '!bg-emerald-600 !text-white' : ''}`} variant={isSelected ? "primary" : "secondary"} onClick={() => handleSelectStudent(student.id)}>
+                          {isSelected ? (
+                              <><Check size={16}/> Seçildi</>
+                          ) : (
+                              <>Profile Git <ChevronRight size={16}/></>
+                          )}
+                      </Button>
                   </div>
-                  <Button className="w-full" variant="secondary" onClick={() => setSelectedStudentId(student.id)}>Profile Git <ChevronRight size={16}/></Button>
-              </div>
-          ))}
+              );
+          })}
           {filteredStudents.length === 0 && <div className={`col-span-full text-center py-12 ${colors.textSec}`}>Aradığınız kriterlere uygun öğrenci bulunamadı.</div>}
       </div>
       
@@ -1439,7 +1466,7 @@ const LandingPage = ({ onGoToLogin }) => {
   );
 };
 
-// --- LOGIN SCREEN ---
+//// --- LOGIN SCREEN ---
 const LoginScreen = ({ onLogin, students, admins, isFirebase, isLoading }) => {
   const [activeTab, setActiveTab] = useState('admin');
   const [password, setPassword] = useState('');
@@ -1470,14 +1497,15 @@ const LoginScreen = ({ onLogin, students, admins, isFirebase, isLoading }) => {
         {!isFirebase && <div className="absolute top-2 right-2 bg-yellow-500/20 text-yellow-500 text-[10px] px-2 py-1 rounded border border-yellow-500/30 flex items-center gap-1"><CloudOff size={12}/> Demo Modu</div>}
         {isFirebase && <div className="absolute top-2 right-2 bg-emerald-500/20 text-emerald-500 text-[10px] px-2 py-1 rounded border border-emerald-500/30 flex items-center gap-1"><Cloud size={12}/> Canlı Bağlantı</div>}
         <div className="text-center mb-8">
-            <h1 className="text-2xl font-bold text-white mb-2">Profesyonel Koçluk Programı</h1>
-            <p className="text-slate-500 text-xs">Uzm. Psikolojik Danışman Hamza Metehan Kılıç tarafından geliştirilmiştir.</p>
+            {/* GÜNCELLEME 3: Marka İsmi Değişti */}
+            <h1 className="text-2xl font-bold text-white mb-2">Koçum Online</h1>
+            <p className="text-slate-500 text-xs">Profesyonel Öğrenci Takip Sistemi</p>
         </div>
         <div className="flex bg-slate-800 p-1 rounded-lg mb-6"><button onClick={() => {setActiveTab('admin'); setError(''); setPassword('');}} className={`flex-1 py-2 rounded-md text-sm font-bold transition-all ${activeTab === 'admin' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`}>Yönetici / Öğretmen</button><button onClick={() => {setActiveTab('student'); setError(''); setPassword('');}} className={`flex-1 py-2 rounded-md text-sm font-bold transition-all ${activeTab === 'student' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`}>Öğrenci</button></div><div className="space-y-4"><Input label="Kullanıcı Adı" value={username} onChange={e => setUsername(e.target.value)} /><Input label="Şifre" type="password" placeholder="••••••" value={password} onChange={e => setPassword(e.target.value)} />{error && <div className="p-3 bg-red-500/10 border border-red-500/20 rounded text-red-400 text-sm text-center">{error}</div>}<Button size="large" className="w-full" onClick={handleLogin}>Giriş Yap</Button></div></div></div>
   );
 };
 
-// --- ANA UYGULAMA (GÜNCELLENMİŞ: Bildirim Filtresi & Veri Akışı) ---
+// --- ANA UYGULAMA (GÜNCELLENMİŞ: Bildirim Silme & Marka & Mobil Navigasyon) ---
 const MainApp = () => {
   const [user, setUser] = useState(null);
   const [students, setStudents] = useState(INITIAL_STUDENTS);
@@ -1534,26 +1562,24 @@ const MainApp = () => {
       return { daysLeft, isExpired: daysLeft < 0, limit: currentAdmin.studentLimit || 20, used: myStudents.length };
   }, [user, admins, myStudents]);
 
-  // --- BİLDİRİM FİLTRESİ (DÜZELTİLDİ: Sınıf Duyurusu İzolasyonu) ---
+  // --- BİLDİRİM FİLTRESİ ---
   const myNotifications = React.useMemo(() => {
       if(!user) return [];
       return notifications.filter(n => {
-          // ÖZEL DURUM: 'my_students' hedefli (Öğretmen -> Sınıf) mesajlar
+          // GÜNCELLEME 2: Eğer kullanıcı bu bildirimi sildiyse gösterme
+          if (n.deletedBy && n.deletedBy.includes(user.id)) return false;
+
+          // ÖZEL DURUM: 'my_students' hedefli mesajlar
           if (n.target === 'my_students') {
-              // Gönderen kişi mesajı görebilir (Öğretmen veya Süperadmin olsa bile sadece kendisininkini)
               if (n.senderId === user.id) return true;
-              
-              // Alıcı öğrenciyse ve mesajı gönderen kendi öğretmeniyse görebilir
               if (user.role === 'student') {
                   const me = students.find(s => s.id === user.id);
                   return me && me.teacherId === n.senderId;
               }
-              // Başkasının sınıf duyurusunu kimse göremez (Süperadmin dahil)
               return false;
           }
-
-          // DİĞER STANDART KURALLAR
-          if (user.role === 'superadmin') return true; // Genel sistem mesajlarını görür
+          // DİĞER KURALLAR
+          if (user.role === 'superadmin') return true; 
           if (user.role === 'admin' && n.target === 'teachers') return true; 
           if (user.role === 'student') {
               if (n.target === 'students') return true; 
@@ -1564,6 +1590,26 @@ const MainApp = () => {
   }, [notifications, user, students]);
 
   const hasUnread = myNotifications.length > 0 && (!myNotifications[0].readBy?.includes(user?.id));
+
+  // --- BİLDİRİM SİLME FONKSİYONU ---
+  const handleDeleteMyNotification = async (notifId) => {
+      if (!isFirebaseActive) {
+          // Demo modu için state'den sil (gerçekte 'deletedBy' simülasyonu zor, direkt listeden çıkarıyoruz)
+          setNotifications(prev => prev.filter(n => n.id !== notifId));
+          return;
+      }
+      try {
+          const notif = notifications.find(n => n.id === notifId);
+          if (notif) {
+              const currentDeletedBy = notif.deletedBy || [];
+              await updateDoc(doc(db, "notifications", notifId), {
+                  deletedBy: [...currentDeletedBy, user.id]
+              });
+          }
+      } catch (error) {
+          console.error("Bildirim silinemedi:", error);
+      }
+  };
 
   useEffect(() => {
     if ((user?.role === 'admin' || user?.role === 'superadmin') && myStudents.length > 0 && selectedStudentId === null) {
@@ -1621,7 +1667,8 @@ const MainApp = () => {
 
   return (
     <div className={`flex flex-col md:flex-row h-screen ${colors.bgMain} ${colors.text} overflow-hidden font-sans transition-colors duration-300`}>
-      <div className={`md:hidden ${colors.bgCard} p-4 flex justify-between items-center border-b ${colors.border} z-50`}><div className="flex items-center gap-2 text-orange-500 font-bold text-lg"><Users size={20}/><span>HMK Koçluk</span></div><button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className={colors.text}>{isMobileMenuOpen ? <X /> : <Menu />}</button></div>
+      {/* GÜNCELLEME 3: Mobil Header Marka İsmi */}
+      <div className={`md:hidden ${colors.bgCard} p-4 flex justify-between items-center border-b ${colors.border} z-50`}><div className="flex items-center gap-2 text-orange-500 font-bold text-lg"><Users size={20}/><span>Koçum Online</span></div><button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className={colors.text}>{isMobileMenuOpen ? <X /> : <Menu />}</button></div>
       {isMobileMenuOpen && (<div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setIsMobileMenuOpen(false)}></div>)}
       <aside className={`fixed inset-y-0 left-0 w-64 ${colors.bgCard} border-r ${colors.border} flex flex-col z-50 transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className={`p-6 border-b ${colors.border} flex flex-col gap-1`}>
@@ -1640,11 +1687,11 @@ const MainApp = () => {
         {user.role === 'superadmin' && activeTab === 'admin_panel' ? (
            <AdminManagementModule admins={admins} setAdmins={setAdmins} user={user} allStudents={students} onInspectStudent={handleInspectStudent} notifications={notifications} setNotifications={setNotifications} />
         ) : (user.role === 'admin' || user.role === 'superadmin') && activeTab === 'dashboard' ? (
-           // DİKKAT: DashboardModule'e admins prop'u eklendi
-           <DashboardModule user={user} students={myStudents} setStudents={setStudents} setSelectedStudentId={setSelectedStudentId} onUpdateStudent={updateStudentData} classes={myClasses} setClasses={setClasses} licenseInfo={licenseInfo} admins={admins} />
+           // GÜNCELLEME 1: setIsMobileMenuOpen prop'u gönderildi
+           <DashboardModule user={user} students={myStudents} setStudents={setStudents} setSelectedStudentId={setSelectedStudentId} onUpdateStudent={updateStudentData} classes={myClasses} setClasses={setClasses} licenseInfo={licenseInfo} admins={admins} setIsMobileMenuOpen={setIsMobileMenuOpen} selectedStudentId={selectedStudentId} />
         ) : !currentStudent ? <div className={`text-center mt-20 ${colors.textSec}`}>Lütfen işlem yapmak için bir öğrenci seçiniz veya öğrenci ekleyiniz.</div> : (
           <>
-            {activeTab === 'dashboard' && <DashboardModule user={user} students={myStudents} setStudents={setStudents} setSelectedStudentId={setSelectedStudentId} onUpdateStudent={updateStudentData} classes={myClasses} setClasses={setClasses} licenseInfo={licenseInfo} admins={admins} />}
+            {activeTab === 'dashboard' && <DashboardModule user={user} students={myStudents} setStudents={setStudents} setSelectedStudentId={setSelectedStudentId} onUpdateStudent={updateStudentData} classes={myClasses} setClasses={setClasses} licenseInfo={licenseInfo} admins={admins} setIsMobileMenuOpen={setIsMobileMenuOpen} selectedStudentId={selectedStudentId} />}
             {activeTab === 'schedule' && <ScheduleModule user={user} student={currentStudent} onUpdateStudent={updateStudentData} students={myStudents} classes={myClasses} curriculum={curriculum} />}
             {activeTab === 'goals' && <GoalsModule user={user} student={currentStudent} onUpdateStudent={updateStudentData} students={myStudents} classes={myClasses} />}
             {activeTab === 'resources' && <ResourceModule user={user} student={currentStudent} curriculum={curriculum} onUpdateStudent={updateStudentData} />}
@@ -1657,7 +1704,24 @@ const MainApp = () => {
         )}
       </main>
       {showProfileModal && <ProfileSettingsModal user={user} onClose={() => setShowProfileModal(false)} onUpdate={handleUpdateProfile} />}
-      {showNotifModal && (<Modal title="Bildirimler" onClose={() => setShowNotifModal(false)}><div className="space-y-4 max-h-80 overflow-y-auto">{myNotifications.map(n => (<div key={n.id} className={`p-4 rounded border ${colors.border} ${colors.bgCard}`}><div className="flex justify-between items-start mb-2"><span className="text-xs font-bold text-orange-500">{n.sender}</span><span className={`text-[10px] ${colors.textSec}`}>{formatDate(n.date, true)}</span></div><p className={`text-sm ${colors.text}`}>{n.text}</p></div>))}{myNotifications.length === 0 && <div className={`text-center ${colors.textSec}`}>Henüz bildirim yok.</div>}</div></Modal>)}
+      {showNotifModal && (<Modal title="Bildirimler" onClose={() => setShowNotifModal(false)}>
+          <div className="space-y-4 max-h-80 overflow-y-auto custom-scrollbar">
+              {myNotifications.map(n => (
+                  <div key={n.id} className={`p-4 rounded border ${colors.border} ${colors.bgCard} relative group`}>
+                      <div className="flex justify-between items-start mb-2">
+                          <span className="text-xs font-bold text-orange-500">{n.sender}</span>
+                          <span className={`text-[10px] ${colors.textSec}`}>{formatDate(n.date, true)}</span>
+                      </div>
+                      <p className={`text-sm ${colors.text} pr-6`}>{n.text}</p>
+                      {/* GÜNCELLEME 2: Silme Butonu */}
+                      <button onClick={() => handleDeleteMyNotification(n.id)} className="absolute top-2 right-2 text-slate-600 hover:text-red-500 p-1 opacity-50 group-hover:opacity-100 transition-opacity">
+                          <Trash2 size={14} />
+                      </button>
+                  </div>
+              ))}
+              {myNotifications.length === 0 && <div className={`text-center ${colors.textSec} py-4`}>Okunmamış veya yeni bildirim yok.</div>}
+          </div>
+      </Modal>)}
     </div>
   );
 };
