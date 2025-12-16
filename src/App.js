@@ -9,6 +9,7 @@ import {
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, addDoc, updateDoc, doc, deleteDoc, onSnapshot, query, setDoc, getDoc } from "firebase/firestore";
 
+
 // --- FIREBASE ENTEGRASYONU ---
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyBcgbe_NhAfzwUHpuAS0TniHv-FifmxOA8", 
@@ -150,16 +151,98 @@ const formatTime = (seconds) => {
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 };
 
-// TARİH FORMATLAYICI (YYYY-MM-DD -> DD/MM/YYYY)
-const formatDate = (dateString) => {
+// TARİH FORMATLAYICI (GÜNCELLENDİ: Saat desteği eklendi)
+const formatDate = (dateString, includeTime = false) => {
   if (!dateString) return "";
-  // Eğer tarih zaten nokta veya slaş içeriyorsa dokunma (Notlar için)
-  if (dateString.includes('.') || dateString.includes('/')) return dateString;
-  const [year, month, day] = dateString.split('-');
-  return `${day}/${month}/${year}`;
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return dateString; // Geçersiz tarihse olduğu gibi döndür
+  
+  const d = date.getDate().toString().padStart(2, '0');
+  const m = (date.getMonth() + 1).toString().padStart(2, '0');
+  const y = date.getFullYear();
+  
+  if (includeTime) {
+      const hours = date.getHours().toString().padStart(2, '0');
+      const mins = date.getMinutes().toString().padStart(2, '0');
+      return `${d}.${m}.${y} ${hours}:${mins}`;
+  }
+  return `${d}.${m}.${y}`;
 };
 
-// --- UI BİLEŞENLERİ (TEMA UYUMLU) ---
+// --- GELİŞMİŞ GRAFİK BİLEŞENİ (TAMİR EDİLDİ: Netler Geri Geldi, X Ekseni Beyaz) ---
+const LineChart = ({ data, dataKey, labelKey, subLabelKey = null, color = "#f97316", height = 250, showDots = true, strokeWidth = 3, maxValue = null, fixedRange = false }) => {
+  const colors = useThemeColors();
+  const containerRef = useRef(null);
+  const [width, setWidth] = useState(600);
+
+  useEffect(() => {
+      const resizeObserver = new ResizeObserver(entries => { if(entries[0]) setWidth(entries[0].contentRect.width); });
+      if(containerRef.current) resizeObserver.observe(containerRef.current);
+      return () => resizeObserver.disconnect();
+  }, []);
+
+  if (!data || data.length < 2) return <div className={`flex items-center justify-center ${colors.textSec} text-sm h-full`}>Veri yetersiz</div>;
+  
+  const calculatedMax = Math.max(...data.map(d => Number(d[dataKey]) || 0));
+  const maxVal = fixedRange ? 100 : (maxValue || (calculatedMax * 1.15) || 10);
+  const padding = 30; 
+  const effectiveHeight = height; 
+
+  const points = data.map((d, i) => {
+    const x = (i / (data.length - 1)) * (width - 2 * padding) + padding;
+    const y = effectiveHeight - padding - ((Number(d[dataKey]) / maxVal) * (effectiveHeight - 2 * padding));
+    return [x, y];
+  });
+
+  const pathD = svgPath(points, bezierCommand);
+  const fillPathD = `${pathD} L ${width - padding},${effectiveHeight - padding} L ${padding},${effectiveHeight - padding} Z`;
+
+  return (
+    <div ref={containerRef} className="w-full relative select-none" style={{ height: effectiveHeight }}>
+      <svg viewBox={`0 0 ${width} ${effectiveHeight}`} className="w-full h-full overflow-visible">
+        <defs>
+          <linearGradient id={`gradient-${color.replace('#','')}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.3" />
+            <stop offset="100%" stopColor={color} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        
+        {/* Y EKSENİ (SADECE ÇİZGİLER - SAYILAR YOK) */}
+        {[0, 0.25, 0.5, 0.75, 1].map(p => { 
+          const y = effectiveHeight - padding - (p * (effectiveHeight - 2*padding)); 
+          return <line key={p} x1={padding} y1={y} x2={width-padding} y2={y} stroke={colors.chartGrid} strokeWidth="1" strokeDasharray="4" opacity="0.3" />;
+        })}
+        
+        <path d={fillPathD} fill={`url(#gradient-${color.replace('#','')})`} stroke="none" />
+        <path d={pathD} fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+        
+        {showDots && data.map((d, i) => {
+          const [x, y] = points[i];
+          return (
+            <g key={i} className="group">
+              {/* Nokta */}
+              <circle cx={x} cy={y} r="5" fill={colors.bgCard} stroke={color} strokeWidth="2" className="transition-all duration-300 group-hover:r-7 cursor-pointer" />
+              
+              {/* --- GERİ GETİRİLEN KISIM: NOKTA ÜZERİNDEKİ NET DEĞERİ --- */}
+              <text x={x} y={y - 12} textAnchor="middle" stroke={colors.bgCard} strokeWidth="3" fontSize="12" fontWeight="bold" paintOrder="stroke">{Number(d[dataKey]).toFixed(1)}</text>
+              <text x={x} y={y - 12} textAnchor="middle" fill={color} fontSize="12" fontWeight="bold">{Number(d[dataKey]).toFixed(1)}</text>
+              
+              {/* X EKSENİ (TARİH) - RENK SABİTLENDİ (Karanlık modda beyaz görünmesi için) */}
+              <text x={x} y={effectiveHeight + 15} textAnchor="middle" fill={colors.isDark ? "#e2e8f0" : "#64748b"} fontSize="10" fontWeight="500">{d[labelKey]}</text>
+              
+              {/* DENEME ADI (Varsa, tarihin hemen altına, minimal) */}
+              {subLabelKey && d[subLabelKey] && (
+                  <text x={x} y={effectiveHeight + 28} textAnchor="middle" fill={colors.isDark ? "#94a3b8" : "#94a3b8"} fontSize="9" fontWeight="400" className="opacity-80">{d[subLabelKey].substring(0,8)}</text>
+              )}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+};
+
+// --- EKSİLEN UI BİLEŞENLERİ (BURAYI YAPIŞTIR) ---
 
 const Input = ({ label, type = "text", value, onChange, placeholder, className = "", min, max }) => {
   const colors = useThemeColors();
@@ -247,349 +330,271 @@ const DeleteConfirmModal = ({ isOpen, onClose, onConfirm, message = "Bu öğeyi 
   );
 };
 
-// maxValue eklendi: Grafiğin tavan değerini dışarıdan belirlememizi sağlar.
-// --- GELİŞMİŞ GRAFİK BİLEŞENİ (Area Chart + Dinamik Ölçek) ---
-const LineChart = ({ data, dataKey, labelKey, color = "#f97316", height = 200, showDots = true, strokeWidth = 3 }) => {
-  const colors = useThemeColors();
-  if (!data || data.length < 2) return <div className={`flex items-center justify-center ${colors.textSec} text-sm h-full`}>Veri yetersiz</div>;
-  
-  // TAVAN AYARI: Grafiği artık 40 soruya göre değil, öğrencinin yaptığı MAX nete göre ölçekliyoruz.
-  const calculatedMax = Math.max(...data.map(d => Number(d[dataKey])));
-  const maxVal = (calculatedMax * 1.15) || 10; // En yüksek değerin %15 fazlasını tavan yap
-  
-  const width = 1000;
-  const padding = 20; // Kenar boşluklarını azalttık
-  
-  const points = data.map((d, i) => {
-    const x = (i / (data.length - 1)) * (width - 2 * padding) + padding;
-    const y = height - padding - ((Number(d[dataKey]) / maxVal) * (height - 2 * padding));
-    return [x, y];
-  });
-
-  const pathD = svgPath(points, bezierCommand);
-  
-  // Alt Alanı Doldurma (Gradient Efekti İçin Yol)
-  const fillPathD = `
-    ${pathD} 
-    L ${width - padding},${height - padding} 
-    L ${padding},${height - padding} 
-    Z
-  `;
-
-  return (
-    <div className="w-full h-full relative" style={{ height: height }}>
-      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible">
-        <defs>
-          <linearGradient id={`gradient-${color}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity="0.3" />
-            <stop offset="100%" stopColor={color} stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        {[0, 0.5, 1].map(p => { 
-          const y = height - padding - (p * (height - 2*padding)); 
-          return <line key={p} x1={padding} y1={y} x2={width-padding} y2={y} stroke={colors.chartGrid} strokeWidth="1" strokeDasharray="4" opacity="0.5" />; 
-        })}
-        <path d={fillPathD} fill={`url(#gradient-${color})`} stroke="none" />
-        <path d={pathD} fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-        {showDots && data.map((d, i) => {
-          const [x, y] = points[i];
-          return (
-            <g key={i} className="group">
-              <circle cx={x} cy={y} r="4" fill={colors.bgCard} stroke={color} strokeWidth="2" className="transition-all duration-300 group-hover:r-6" />
-              <text x={x} y={y - 15} textAnchor="middle" stroke={colors.bgCard} strokeWidth="3" fontSize="14" fontWeight="bold" paintOrder="stroke" className="select-none">{Number(d[dataKey]).toFixed(1)}</text>
-              <text x={x} y={y - 15} textAnchor="middle" fill={color} fontSize="14" fontWeight="bold" className="select-none">{Number(d[dataKey]).toFixed(1)}</text>
-              <text x={x} y={height + 15} textAnchor="middle" fill={colors.textSec} fontSize="10">{d[labelKey]}</text>
-            </g>
-          );
-        })}
-      </svg>
-    </div>
-  );
-};
-
-// --- YÖNETİCİ YÖNETİMİ ---
-const AdminManagementModule = ({ admins, setAdmins, user, allStudents, onInspectStudent }) => {
+// --- YÖNETİCİ YÖNETİMİ (GÜNCELLENMİŞ: Kullanıcı Adı Çakışma Kontrolü) ---
+const AdminManagementModule = ({ admins, setAdmins, user, allStudents, onInspectStudent, notifications, setNotifications }) => {
   const [showModal, setShowModal] = useState(false);
   const [editingAdmin, setEditingAdmin] = useState(null);
-  const [form, setForm] = useState({ name: '', username: '', password: '' });
+  const [form, setForm] = useState({ name: '', username: '', password: '', startDate: '', endDate: '', studentLimit: 20 });
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [expandedAdminId, setExpandedAdminId] = useState(null);
+  
+  // BİLDİRİM STATE
+  const [notificationMsg, setNotificationMsg] = useState('');
+  const [targetAudience, setTargetAudience] = useState('teachers');
+
   const colors = useThemeColors();
 
   if (user.role !== 'superadmin') return <div className={`${colors.text} text-center`}>Bu sayfaya erişim yetkiniz yok.</div>;
 
-  const handleEdit = (admin) => { setEditingAdmin(admin); setForm({ name: admin.name, username: admin.username, password: admin.password }); setShowModal(true); };
+  const handleEdit = (admin) => { 
+      setEditingAdmin(admin); 
+      setForm({ 
+          name: admin.name, 
+          username: admin.username, 
+          password: admin.password,
+          startDate: admin.startDate || new Date().toISOString().split('T')[0],
+          endDate: admin.endDate || new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split('T')[0],
+          studentLimit: admin.studentLimit || 20
+      }); 
+      setShowModal(true); 
+  };
   
   const handleSave = async () => {
     if (!form.name || !form.username || !form.password) return alert("Tüm alanları doldurunuz.");
+    
+    // ÇAKIŞMA KONTROLÜ
+    // 1. Adminler arasında ara (kendisi hariç)
+    const adminExists = admins.some(a => a.username === form.username && a.id !== editingAdmin?.id);
+    // 2. Öğrenciler arasında ara
+    const studentExists = allStudents.some(s => s.username === form.username);
+
+    if (adminExists || studentExists) {
+        return alert("Bu kullanıcı adı sistemde (öğrenci veya öğretmen olarak) kayıtlı. Lütfen farklı bir kullanıcı adı seçiniz.");
+    }
+
+    const adminData = { ...form, studentLimit: parseInt(form.studentLimit) };
+
     if (editingAdmin) {
-       const updatedAdmin = { ...editingAdmin, ...form };
        if (isFirebaseActive) { 
-           try { 
-               const adminRef = doc(db, "admins", editingAdmin.id); 
-               const { id, ...data } = updatedAdmin; 
-               await setDoc(adminRef, data, { merge: true }); 
-            } catch(e) { console.error(e); alert("Güncelleme hatası: " + e.message); } 
-       } else { setAdmins(admins.map(a => a.id === editingAdmin.id ? updatedAdmin : a)); }
+           try { await setDoc(doc(db, "admins", editingAdmin.id), { ...adminData, id: undefined }, { merge: true }); } 
+           catch(e) { console.error(e); alert("Hata oluştu."); } 
+       } else { setAdmins(admins.map(a => a.id === editingAdmin.id ? { ...editingAdmin, ...adminData } : a)); }
     } else {
-        const newAdmin = { name: form.name, username: form.username, password: form.password, role: 'admin' };
+        const newAdmin = { ...adminData, role: 'admin' };
         if (isFirebaseActive) { 
-            try { await addDoc(collection(db, "admins"), newAdmin); } catch(e) { console.error(e); alert("Kayıt hatası: " + e.message); } 
+            try { await addDoc(collection(db, "admins"), newAdmin); } 
+            catch(e) { console.error(e); alert("Hata oluştu."); } 
         } else { setAdmins([...admins, { id: Date.now().toString(), ...newAdmin }]); }
     }
-    setShowModal(false); setForm({ name: '', username: '', password: '' }); setEditingAdmin(null);
+    setShowModal(false); setForm({ name: '', username: '', password: '', startDate: '', endDate: '', studentLimit: 20 }); setEditingAdmin(null);
   };
 
-  const handleDelete = async (id) => { 
-      if (id === user.id) { alert("Güvenlik nedeniyle şu an giriş yapmış olduğunuz hesabı silemezsiniz."); setDeleteConfirm(null); return; }
-      if(isFirebaseActive) { try { await deleteDoc(doc(db, "admins", id)); } catch(e) { console.error("Silme hatası:", e); } } 
-      else { setAdmins(admins.filter(a => a.id !== id)); } 
-      setDeleteConfirm(null); 
+  const handleSendNotification = async () => {
+      if(!notificationMsg) return;
+      const newNotif = {
+          text: notificationMsg,
+          date: new Date().toISOString(),
+          sender: "Sistem Yöneticisi",
+          target: targetAudience,
+          readBy: []
+      };
+      if(isFirebaseActive) {
+          try { await addDoc(collection(db, "notifications"), newNotif); alert("Bildirim gönderildi."); setNotificationMsg(''); }
+          catch(e) { alert("Hata: " + e.message); }
+      } else { alert("Demo modunda gönderildi."); }
+  };
+
+  const handleDeleteNotification = async (id) => {
+      if(!window.confirm("Bu bildirimi silmek istiyor musunuz?")) return;
+      if(isFirebaseActive) {
+          try { await deleteDoc(doc(db, "notifications", id)); } catch(e) { console.error(e); }
+      } else { setNotifications(notifications.filter(n => n.id !== id)); }
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
-       <div className="flex justify-between items-center"><h2 className={`text-2xl font-bold ${colors.text}`}>Yönetici & Öğretmen Paneli</h2><Button icon={Plus} onClick={() => { setEditingAdmin(null); setForm({name:'', username:'', password:''}); setShowModal(true); }}>Yeni Yönetici Ekle</Button></div>
+    <div className="space-y-8 animate-fade-in">
+       <div className="flex justify-between items-center"><h2 className={`text-2xl font-bold ${colors.text}`}>Yönetici & Lisans Paneli</h2><Button icon={Plus} onClick={() => { setEditingAdmin(null); setForm({name:'', username:'', password:'', startDate: new Date().toISOString().split('T')[0], endDate: '', studentLimit: 20}); setShowModal(true); }}>Yeni Öğretmen Ekle</Button></div>
+       
        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
          {admins.map(admin => {
            const adminStudents = allStudents.filter(s => s.teacherId === admin.id);
            const isExpanded = expandedAdminId === admin.id;
+           const daysLeft = admin.endDate ? Math.ceil((new Date(admin.endDate) - new Date()) / (1000 * 60 * 60 * 24)) : 0;
+           const isExpired = daysLeft < 0;
            return (
-             <div key={admin.id} className={`${colors.bgCard} border ${colors.border} rounded-xl p-6 relative group transition-all duration-300 ${colors.shadow} ${isExpanded ? 'row-span-2 shadow-xl border-orange-500/30' : ''}`}>
-               <div className="flex items-center gap-4"><div className={`w-12 h-12 ${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} rounded-full flex items-center justify-center text-orange-500 shrink-0`}><User size={24} /></div><div className="overflow-hidden"><h3 className={`font-bold ${colors.text} truncate`}>{admin.name}</h3><div className={`text-sm ${colors.textSec} truncate`}>K.Adı: <span className={colors.isDark ? 'text-slate-300' : 'text-slate-700'}>{admin.username}</span></div><div className={`text-xs ${colors.textSec} mt-1`}>{adminStudents.length} Öğrenci Kayıtlı</div></div></div>
-               <div className="mt-4 flex gap-2"><button onClick={() => setExpandedAdminId(isExpanded ? null : admin.id)} className={`flex-1 py-2 rounded text-xs font-bold flex items-center justify-center gap-1 transition-colors ${isExpanded ? 'bg-orange-500 text-white' : `${colors.isDark ? 'bg-slate-800 text-slate-400 hover:text-white' : 'bg-slate-100 text-slate-600 hover:text-slate-900'}`}`}><Users size={14} /> {isExpanded ? 'Gizle' : 'Öğrenciler'}</button><button onClick={() => handleEdit(admin)} className={`p-2 ${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} rounded text-slate-600 hover:text-blue-500 hover:bg-blue-500/10 transition-colors`}><Edit2 size={16}/></button><button onClick={() => setDeleteConfirm(admin.id)} className={`p-2 ${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} rounded text-slate-600 hover:text-red-500 hover:bg-red-500/10 transition-colors`}><Trash2 size={16}/></button></div>
+             <div key={admin.id} className={`${colors.bgCard} border ${colors.border} rounded-xl p-6 relative group transition-all ${isExpanded ? 'row-span-2 shadow-xl border-orange-500/30' : ''}`}>
+               <div className="flex items-center gap-4">
+                   <div className={`w-12 h-12 ${isExpired ? 'bg-red-500/20 text-red-500' : 'bg-emerald-500/20 text-emerald-500'} rounded-full flex items-center justify-center shrink-0`}><User size={24} /></div>
+                   <div className="overflow-hidden flex-1"><h3 className={`font-bold ${colors.text} truncate`}>{admin.name}</h3><div className={`text-xs ${colors.textSec}`}>Kullanılan: {adminStudents.length} / {admin.studentLimit || '∞'}</div><div className={`text-[10px] font-bold mt-1 ${isExpired ? 'text-red-500' : 'text-emerald-500'}`}>{isExpired ? 'SÜRESİ BİTTİ' : `${daysLeft} Gün Kaldı`}</div></div>
+               </div>
+               <div className="mt-4 flex gap-2"><button onClick={() => setExpandedAdminId(isExpanded ? null : admin.id)} className={`flex-1 py-2 rounded text-xs font-bold flex items-center justify-center gap-1 transition-colors ${isExpanded ? 'bg-orange-500 text-white' : `${colors.isDark ? 'bg-slate-800 text-slate-400 hover:text-white' : 'bg-slate-100 text-slate-600 hover:text-slate-900'}`}`}><Users size={14} /> {isExpanded ? 'Gizle' : 'Öğrenciler'}</button><button onClick={() => handleEdit(admin)} className={`p-2 ${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} rounded text-slate-600 hover:text-blue-500 hover:bg-blue-500/10 transition-colors`}><Edit2 size={16}/></button><button onClick={() => { if (admin.id === user.id) return alert("Kendinizi silemezsiniz."); setDeleteConfirm(admin.id); }} className={`p-2 ${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} rounded text-slate-600 hover:text-red-500 hover:bg-red-500/10 transition-colors`}><Trash2 size={16}/></button></div>
                {isExpanded && (<div className={`mt-4 pt-4 border-t ${colors.border} animate-fade-in`}><h4 className={`text-xs uppercase font-bold ${colors.textSec} mb-2`}>Öğrenci Listesi</h4><div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar">{adminStudents.map(st => (<div key={st.id} onClick={() => onInspectStudent(st.id)} className={`flex justify-between items-center p-2 rounded ${colors.isDark ? 'bg-slate-800/50 hover:bg-slate-800' : 'bg-slate-100 hover:bg-slate-200'} cursor-pointer transition-colors border border-transparent hover:border-slate-400`}><div><div className={`text-sm font-medium ${colors.text}`}>{st.name}</div><div className={`text-[10px] ${colors.textSec}`}>{st.grade}</div></div><Eye size={14} className={`${colors.textSec} hover:text-orange-500`} /></div>))}{adminStudents.length === 0 && <div className={`text-center text-xs ${colors.textSec} py-2`}>Öğrenci bulunamadı.</div>}</div></div>)}
              </div>
            );
          })}
        </div>
-       {showModal && (<Modal title={editingAdmin ? "Yönetici Düzenle" : "Yeni Yönetici Ekle"} onClose={() => setShowModal(false)}><div className="space-y-4"><Input label="Ad Soyad" value={form.name} onChange={e => setForm({...form, name: e.target.value})} /><Input label="Kullanıcı Adı" value={form.username} onChange={e => setForm({...form, username: e.target.value})} /><Input label="Şifre" value={form.password} onChange={e => setForm({...form, password: e.target.value})} /><Button className="w-full" onClick={handleSave}>{editingAdmin ? "Güncelle" : "Kaydet"}</Button></div></Modal>)}
-       <DeleteConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={() => handleDelete(deleteConfirm)} />
+
+       {/* SİSTEM BİLDİRİMİ */}
+       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+           <div className={`p-6 ${colors.bgCardTransparent} border ${colors.border} rounded-xl`}>
+               <h3 className={`text-lg font-bold ${colors.text} mb-4 flex items-center gap-2`}><MessageSquare className="text-orange-500"/> Bildirim Gönder</h3>
+               <div className="space-y-4">
+                   <div className="flex gap-2">
+                       <button onClick={() => setTargetAudience('teachers')} className={`flex-1 py-2 rounded text-sm font-bold border transition-colors ${targetAudience === 'teachers' ? 'bg-orange-500 text-white border-orange-500' : `${colors.bgCard} ${colors.border} ${colors.textSec}`}`}>Öğretmenlere</button>
+                       <button onClick={() => setTargetAudience('students')} className={`flex-1 py-2 rounded text-sm font-bold border transition-colors ${targetAudience === 'students' ? 'bg-blue-500 text-white border-blue-500' : `${colors.bgCard} ${colors.border} ${colors.textSec}`}`}>Tüm Öğrencilere</button>
+                   </div>
+                   <textarea className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg p-3 ${colors.text} h-24`} placeholder="Duyuru metnini buraya yazınız..." value={notificationMsg} onChange={e => setNotificationMsg(e.target.value)} />
+                   <Button onClick={handleSendNotification} className="w-full">Gönder</Button>
+               </div>
+           </div>
+           
+           <div className={`p-6 ${colors.bgCardTransparent} border ${colors.border} rounded-xl`}>
+               <h3 className={`text-lg font-bold ${colors.text} mb-4`}>Son Gönderilenler</h3>
+               <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar">
+                   {notifications.filter(n => n.sender === "Sistem Yöneticisi").map(n => (
+                       <div key={n.id} className={`p-3 rounded border ${colors.border} ${colors.bgCard} flex justify-between items-center group`}>
+                           <div>
+                               <div className="flex items-center gap-2 mb-1">
+                                   <span className={`text-[10px] px-1.5 rounded text-white ${n.target === 'teachers' ? 'bg-orange-500' : 'bg-blue-500'}`}>{n.target === 'teachers' ? 'Öğretmenler' : 'Öğrenciler'}</span>
+                                   <span className={`text-[10px] ${colors.textSec}`}>{formatDate(n.date, true)}</span>
+                               </div>
+                               <p className={`text-xs ${colors.text} line-clamp-1`}>{n.text}</p>
+                           </div>
+                           <button onClick={() => handleDeleteNotification(n.id)} className="text-slate-500 hover:text-red-500 p-2"><Trash2 size={14}/></button>
+                       </div>
+                   ))}
+               </div>
+           </div>
+       </div>
+
+       {showModal && (<Modal title={editingAdmin ? "Öğretmen Lisans Düzenle" : "Yeni Öğretmen Ekle"} onClose={() => setShowModal(false)}><div className="space-y-4"><Input label="Ad Soyad" value={form.name} onChange={e => setForm({...form, name: e.target.value})} /><Input label="Kullanıcı Adı" value={form.username} onChange={e => setForm({...form, username: e.target.value})} /><Input label="Şifre" value={form.password} onChange={e => setForm({...form, password: e.target.value})} /><div className="grid grid-cols-2 gap-4 bg-orange-500/10 p-3 rounded-lg border border-orange-500/20"><div><label className={`block text-xs font-bold ${colors.textSec} mb-1`}>Başlangıç Tarihi</label><input type="date" className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded p-2 ${colors.text} text-sm`} value={form.startDate} onChange={e => setForm({...form, startDate: e.target.value})} /></div><div><label className={`block text-xs font-bold ${colors.textSec} mb-1`}>Bitiş Tarihi</label><input type="date" className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded p-2 ${colors.text} text-sm`} value={form.endDate} onChange={e => setForm({...form, endDate: e.target.value})} /></div><div className="col-span-2"><Input label="Öğrenci Kayıt Limiti" type="number" value={form.studentLimit} onChange={e => setForm({...form, studentLimit: e.target.value})} /></div></div><Button className="w-full" onClick={handleSave}>{editingAdmin ? "Güncelle" : "Kaydet"}</Button></div></Modal>)}
+       <DeleteConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={async () => { if(isFirebaseActive) await deleteDoc(doc(db, "admins", deleteConfirm)); else setAdmins(admins.filter(a => a.id !== deleteConfirm)); setDeleteConfirm(null); }} />
     </div>
   );
 };
-// 0. DASHBOARD (GÜNCELLENMİŞ)
-const DashboardModule = ({ user, students, setStudents, setSelectedStudentId, onUpdateStudent, classes, setClasses }) => {
+
+// 0. DASHBOARD (GÜNCELLENMİŞ: Öğrenci Kullanıcı Adı Kontrolü)
+const DashboardModule = ({ user, students, setStudents, setSelectedStudentId, onUpdateStudent, classes, setClasses, licenseInfo, admins }) => {
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  // Form'a 'classId' eklendi
   const [form, setForm] = useState({ name: '', grade: '', target: '', phone: '', school: '', username: '', password: '', classId: '' });
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [timerMode, setTimerMode] = useState('pomodoro');
   const [timeLeft, setTimeLeft] = useState(25 * 60);
   const [isActive, setIsActive] = useState(false);
-  
-  // YENİ STATE'LER: Arama ve Sınıf Yönetimi
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedClassFilter, setSelectedClassFilter] = useState('ALL');
   const [showClassModal, setShowClassModal] = useState(false);
   const [newClassName, setNewClassName] = useState('');
+  // BİLDİRİM MODALI
+  const [showNotifModal, setShowNotifModal] = useState(false);
+  const [notifMsg, setNotifMsg] = useState('');
 
   const timerRef = useRef(null);
   const colors = useThemeColors();
 
-  // ... (Timer useEffect aynen kalıyor)
   useEffect(() => {
-    if (isActive && timeLeft > 0) {
-      timerRef.current = setInterval(() => { setTimeLeft((prev) => prev - 1); }, 1000);
-    } else if (timeLeft === 0) {
-      clearInterval(timerRef.current); setIsActive(false); handleTimerComplete();
-    }
+    if (isActive && timeLeft > 0) { timerRef.current = setInterval(() => { setTimeLeft((prev) => prev - 1); }, 1000); } 
+    else if (timeLeft === 0) { clearInterval(timerRef.current); setIsActive(false); handleTimerComplete(); }
     return () => clearInterval(timerRef.current);
   }, [isActive, timeLeft]);
 
-  const handleTimerComplete = () => { /* ... (Eski kodla aynı) ... */ if (user.role === 'student') { const student = students.find(s => s.id === user.id); if (student) { const newStats = { ...student.stats }; if (timerMode === 'pomodoro') newStats.pomodoroCount = (newStats.pomodoroCount || 0) + 1; else newStats.sprintCount = (newStats.sprintCount || 0) + 1; onUpdateStudent({ ...student, stats: newStats }); } } resetTimer(timerMode); };
+  const handleTimerComplete = () => { if (user.role === 'student') { const s = students.find(x=>x.id===user.id); if(s) onUpdateStudent({...s, stats:{...s.stats, pomodoroCount: (s.stats.pomodoroCount||0)+1}}); } resetTimer(timerMode); };
   const resetTimer = (mode) => { setIsActive(false); clearInterval(timerRef.current); if (mode === 'pomodoro') setTimeLeft(25 * 60); else setTimeLeft(50 * 60); };
   const changeMode = (mode) => { setTimerMode(mode); resetTimer(mode); };
   const toggleTimer = () => setIsActive(!isActive);
 
-  // ÖĞRENCİ KAYDETME (Güncellendi: ClassId desteği)
+  // ÖĞRENCİ KAYIT & ÇAKIŞMA KONTROLÜ
   const handleSave = async () => {
-    if(!form.name || !form.username) return alert("İsim ve kullanıcı adı zorunludur.");
-    if (editingId) { const student = students.find(s => s.id === editingId); onUpdateStudent({ ...student, ...form }); setEditingId(null); } 
-    else { 
-        const newStudent = { ...form, teacherId: user.id, exams: [], moods: [], lessons: {}, interviews: [], payments: [], teacherNotes: [], assignments: [], pastWeeks: [], goals: [], resources: [], stats: { totalSolved: 0, monthlySolved: 0, xp: 0, level: 1 } }; 
-        if (isFirebaseActive) { 
-            try { await addDoc(collection(db, "students"), newStudent); } catch(e) { console.error(e); alert("Kayıt hatası: " + e.message); } 
-        } else { setStudents([...students, { id: Date.now(), ...newStudent }]); } 
+    if(!form.name || !form.username) return alert("Zorunlu alanları doldurun.");
+    
+    // ÇAKIŞMA KONTROLÜ
+    // 1. Öğrenciler arasında ara (kendi düzenlemesi hariç)
+    const studentExists = students.some(s => s.username === form.username && s.id !== editingId);
+    // 2. Adminler arasında ara
+    const adminExists = admins.some(a => a.username === form.username);
+
+    if (studentExists || adminExists) {
+        return alert("Bu kullanıcı adı zaten kullanımda. Lütfen başka bir kullanıcı adı seçin.");
     }
-    setShowModal(false); setForm({ name: '', grade: '', target: '', phone: '', school: '', username: '', password: '', classId: '' });
+
+    if (!editingId && user.role === 'admin' && licenseInfo && licenseInfo.used >= licenseInfo.limit) return alert(`Kota doldu!`);
+    
+    const data = { ...form, teacherId: user.id, ...(!editingId && { exams:[], moods:[], lessons:{}, payments:[], teacherNotes:[], assignments:[], pastWeeks:[], stats:{ totalSolved:0, monthlySolved:0 } }) };
+    
+    if (editingId) { const s = students.find(x=>x.id===editingId); onUpdateStudent({...s, ...data}); setEditingId(null); }
+    else { if(isFirebaseActive) await addDoc(collection(db,"students"), data); else setStudents([...students, {id:Date.now(), ...data}]); }
+    
+    setShowModal(false); setForm({ name:'', grade:'', target:'', phone:'', school:'', username:'', password:'', classId:'' });
   };
 
-  // SINIF YÖNETİMİ İŞLEVLERİ
-  const handleAddClass = async () => {
-      if(!newClassName) return;
-      const newClass = { id: Date.now().toString(), name: newClassName };
-      if(isFirebaseActive) {
-         try { await addDoc(collection(db, "classes"), newClass); } catch(e) { console.error(e); }
-      } else {
-         setClasses([...classes, newClass]);
-      }
-      setNewClassName('');
-  };
+  const handleAddClass = async () => { if(!newClassName) return; const c = {name:newClassName, teacherId:user.id}; if(isFirebaseActive) await addDoc(collection(db,"classes"),c); else setClasses([...classes, {id:Date.now(),...c}]); setNewClassName(''); };
+  const handleDeleteClass = async (id) => { if(window.confirm("Silinsin mi?")) { if(isFirebaseActive) await deleteDoc(doc(db,"classes",id)); else setClasses(classes.filter(c=>c.id!==id)); } };
   
-  const handleDeleteClass = async (id) => {
-      if(!window.confirm("Bu sınıfı silmek istediğinize emin misiniz?")) return;
-      if(isFirebaseActive) {
-          try { await deleteDoc(doc(db, "classes", id)); } catch(e) { console.error(e); }
-      } else {
-          setClasses(classes.filter(c => c.id !== id));
-      }
+  const handleSendTeacherNotif = async () => {
+      if(!notifMsg) return;
+      const newNotif = { text: notifMsg, date: new Date().toISOString(), sender: user.name, senderId: user.id, target: 'my_students', readBy: [] };
+      if(isFirebaseActive) { try { await addDoc(collection(db, "notifications"), newNotif); alert("Duyuru öğrencilerime gönderildi."); setNotifMsg(''); setShowNotifModal(false); } catch(e) { alert("Hata: " + e.message); } } else { alert("Demo modunda gönderildi."); setShowNotifModal(false); }
   };
 
   const handleEdit = (student) => { setForm({ name: student.name, grade: student.grade, target: student.target, phone: student.phone, school: student.school, username: student.username, password: student.password, classId: student.classId || '' }); setEditingId(student.id); setShowModal(true); };
-  const handleDeleteRequest = (e, id) => { e.stopPropagation(); e.preventDefault(); setDeleteConfirm(id); };
-  const confirmDelete = async () => { if (deleteConfirm) { if(isFirebaseActive) { await deleteDoc(doc(db, "students", deleteConfirm)); } else { setStudents(students.filter(s => s.id !== deleteConfirm)); } if (setSelectedStudentId) setSelectedStudentId(null); setDeleteConfirm(null); } };
+  const confirmDelete = async () => { if (deleteConfirm) { if(isFirebaseActive) await deleteDoc(doc(db, "students", deleteConfirm)); else setStudents(students.filter(s => s.id !== deleteConfirm)); setSelectedStudentId(null); setDeleteConfirm(null); } };
 
-  // FİLTRELEME MANTIĞI
   const filteredStudents = students.filter(student => {
       const matchesSearch = student.name.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesClass = selectedClassFilter === 'ALL' || student.classId === selectedClassFilter;
-      return matchesSearch && matchesClass;
+      if (selectedClassFilter === 'ALL') return matchesSearch;
+      if (selectedClassFilter === 'NO_CLASS') return matchesSearch && (!student.classId || !classes.find(c => c.id === student.classId));
+      return matchesSearch && student.classId === selectedClassFilter;
   });
 
-  // ÖĞRENCİ GÖRÜNÜMÜ (Değişmedi)
   if (user.role === 'student') {
-     // ... (Eski öğrenci dashboard kodu buraya gelecek - Kısaltma yapıyorum, yukarıdaki orjinal kodun aynısı buraya gelecek) ...
-     // NOT: Kopyala-Yapıştır yaparken yukarıdaki 'User === student' bloğunun içeriğini buraya aynen koyunuz. 
-     // Yer kazanmak için burayı kısa geçiyorum, mantık değişmedi.
      const s = students.find(s => s.id === user.id);
-     if (!s) return <div className={`${colors.text} text-center`}>Veri yükleniyor...</div>;
+     if (!s) return <div>Yükleniyor...</div>;
      return (
         <div className="space-y-6 animate-fade-in">
-           {/* ... Orjinal Öğrenci Dashboard İçeriği ... */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <Card className="bg-gradient-to-br from-slate-900 to-slate-800 border-orange-500/30">
-                    <div className="flex justify-between items-start mb-4"><h3 className="text-lg font-bold text-white flex items-center gap-2"><Timer className="text-orange-500"/> Çalışma Sayacı</h3><div className="flex bg-slate-800 rounded p-1"><button onClick={() => changeMode('pomodoro')} className={`px-3 py-1 text-xs font-bold rounded transition-colors ${timerMode === 'pomodoro' ? 'bg-orange-500 text-white' : 'text-slate-400 hover:text-white'}`}>Pomodoro</button><button onClick={() => changeMode('sprint')} className={`px-3 py-1 text-xs font-bold rounded transition-colors ${timerMode === 'sprint' ? 'bg-orange-500 text-white' : 'text-slate-400 hover:text-white'}`}>Sprint</button></div></div>
-                    <div className="flex flex-col items-center justify-center py-4"><div className="text-5xl md:text-6xl font-mono font-bold text-white mb-6 tracking-wider">{formatTime(timeLeft)}</div><div className="flex gap-4"><Button onClick={toggleTimer} size="large" className={isActive ? "bg-amber-600 hover:bg-amber-700" : "bg-emerald-600 hover:bg-emerald-700"}>{isActive ? <><Pause size={20}/> Duraklat</> : <><Play size={20}/> Başlat</>}</Button><Button variant="secondary" onClick={() => resetTimer(timerMode)}><RotateCcw size={20}/> Sıfırla</Button></div></div>
-                </Card>
-                <div className="grid grid-cols-2 gap-4"><Card className={`${colors.bgCard} flex flex-col items-center justify-center text-center`}><div className="w-12 h-12 rounded-full bg-orange-500/20 flex items-center justify-center mb-2 text-orange-500"><Clock size={24}/></div><div className={`text-3xl font-bold ${colors.text}`}>{s.stats?.pomodoroCount || 0}</div><div className={`text-xs ${colors.textSec} uppercase font-bold mt-1`}>Pomodoro</div></Card><Card className={`${colors.bgCard} flex flex-col items-center justify-center text-center`}><div className="w-12 h-12 rounded-full bg-blue-500/20 flex items-center justify-center mb-2 text-blue-500"><Zap size={24}/></div><div className={`text-3xl font-bold ${colors.text}`}>{s.stats?.sprintCount || 0}</div><div className={`text-xs ${colors.textSec} uppercase font-bold mt-1`}>Sprint</div></Card><Card className={`${colors.bgCard} flex flex-col items-center justify-center text-center col-span-2`}><div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center mb-2 text-green-500"><Award size={24}/></div><div className={`text-3xl font-bold ${colors.text}`}>{s.stats?.totalSolved || 0}</div><div className={`text-xs ${colors.textSec} uppercase font-bold mt-1`}>Toplam Soru</div></Card></div>
-            </div>
-            {/* ... Diğer istatistik kartları ... */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><Card className="bg-gradient-to-br from-slate-900 to-slate-800 border-orange-500/30"><div className="flex justify-between items-start mb-4"><h3 className="text-lg font-bold text-white flex items-center gap-2"><Timer className="text-orange-500"/> Çalışma Sayacı</h3><div className="flex bg-slate-800 rounded p-1"><button onClick={() => changeMode('pomodoro')} className={`px-3 py-1 text-xs font-bold rounded transition-colors ${timerMode === 'pomodoro' ? 'bg-orange-500 text-white' : 'text-slate-400 hover:text-white'}`}>Pomodoro</button><button onClick={() => changeMode('sprint')} className={`px-3 py-1 text-xs font-bold rounded transition-colors ${timerMode === 'sprint' ? 'bg-orange-500 text-white' : 'text-slate-400 hover:text-white'}`}>Sprint</button></div></div><div className="flex flex-col items-center justify-center py-4"><div className="text-5xl md:text-6xl font-mono font-bold text-white mb-6 tracking-wider">{formatTime(timeLeft)}</div><div className="flex gap-4"><Button onClick={toggleTimer} size="large" className={isActive ? "bg-amber-600 hover:bg-amber-700" : "bg-emerald-600 hover:bg-emerald-700"}>{isActive ? <><Pause size={20}/> Duraklat</> : <><Play size={20}/> Başlat</>}</Button><Button variant="secondary" onClick={() => resetTimer(timerMode)}><RotateCcw size={20}/> Sıfırla</Button></div></div></Card><div className="grid grid-cols-2 gap-4"><Card className={`${colors.bgCard} flex flex-col items-center justify-center text-center`}><div className="w-12 h-12 rounded-full bg-orange-500/20 flex items-center justify-center mb-2 text-orange-500"><Clock size={24}/></div><div className={`text-3xl font-bold ${colors.text}`}>{s.stats?.pomodoroCount || 0}</div><div className={`text-xs ${colors.textSec} uppercase font-bold mt-1`}>Pomodoro</div></Card><Card className={`${colors.bgCard} flex flex-col items-center justify-center text-center`}><div className="w-12 h-12 rounded-full bg-blue-500/20 flex items-center justify-center mb-2 text-blue-500"><Zap size={24}/></div><div className={`text-3xl font-bold ${colors.text}`}>{s.stats?.sprintCount || 0}</div><div className={`text-xs ${colors.textSec} uppercase font-bold mt-1`}>Sprint</div></Card><Card className={`${colors.bgCard} flex flex-col items-center justify-center text-center col-span-2`}><div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center mb-2 text-green-500"><Award size={24}/></div><div className={`text-3xl font-bold ${colors.text}`}>{s.stats?.totalSolved || 0}</div><div className={`text-xs ${colors.textSec} uppercase font-bold mt-1`}>Toplam Soru</div></Card></div></div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"><Card className={`border-l-4 border-l-blue-500 ${colors.bgCard}`}><div className={`${colors.textSec} text-xs uppercase font-bold mb-2`}>Toplam Deneme</div><div className={`text-4xl font-bold ${colors.text}`}>{s.exams?.length || 0}</div></Card><Card className={`border-l-4 border-l-green-500 ${colors.bgCard}`}><div className={`${colors.textSec} text-xs uppercase font-bold mb-2`}>Bitirilen Konu</div><div className={`text-4xl font-bold ${colors.text}`}>{Object.values(s.lessons || {}).filter(l => l.konu).length}</div></Card><Card className={`border-l-4 border-l-orange-500 ${colors.bgCard}`}><div className={`${colors.textSec} text-xs uppercase font-bold mb-2`}>Son Deneme Neti</div><div className={`text-4xl font-bold ${colors.text}`}>{s.exams?.length > 0 ? s.exams[0].totalNet.toFixed(1) : '-'}</div></Card><Card className={`border-l-4 border-l-purple-500 ${colors.bgCard}`}><div className={`${colors.textSec} text-xs uppercase font-bold mb-2`}>Aylık Soru</div><div className={`text-4xl font-bold ${colors.text}`}>{s.stats?.monthlySolved || 0}</div></Card></div>
+            {s.teacherNotes && s.teacherNotes.length > 0 && (<div className="mt-6"><Card title="Öğretmenden Notlar" className={`border-l-4 border-l-orange-500 ${colors.bgCard}`}><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{s.teacherNotes.map((note, idx) => (<div key={idx} className={`${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} p-4 rounded-lg border ${colors.border}`}><div className="flex items-center gap-2 mb-2"><MessageSquare size={14} className="text-orange-500" /><span className={`text-xs font-bold ${colors.textSec}`}>{note.date}</span></div><p className={`${colors.text} text-sm italic whitespace-pre-wrap`}>"{note.text}"</p></div>))}</div></Card></div>)}
         </div>
      );
   }
 
-  // ÖĞRETMEN GÖRÜNÜMÜ (YENİLENDİ)
   return (
     <div className="space-y-8 animate-fade-in">
       <div className="flex flex-col md:flex-row justify-between items-center gap-4">
           <h2 className={`text-2xl font-bold ${colors.text}`}>Öğrenci Portföyü</h2>
           <div className="flex gap-2">
+            <Button variant="secondary" icon={MessageSquare} onClick={() => setShowNotifModal(true)}>Duyuru Yap</Button>
             <Button variant="secondary" icon={Users} onClick={() => setShowClassModal(true)}>Sınıfları Yönet</Button>
             <Button icon={Plus} size="large" onClick={() => setShowModal(true)}>Yeni Öğrenci Ekle</Button>
           </div>
       </div>
-
-      {/* ARAMA VE FİLTRELEME ÇUBUĞU */}
       <div className={`p-4 ${colors.bgCardTransparent} border ${colors.border} rounded-xl flex flex-col md:flex-row gap-4`}>
-         <div className="flex-1">
-            <Input 
-                placeholder="Öğrenci adı ile ara..." 
-                value={searchQuery} 
-                onChange={e => setSearchQuery(e.target.value)} 
-                className="mb-0" 
-            />
-         </div>
-         <div className="md:w-64">
-             <select 
-                className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg px-4 py-3 ${colors.text} text-sm focus:outline-none focus:border-orange-500`}
-                value={selectedClassFilter}
-                onChange={e => setSelectedClassFilter(e.target.value)}
-             >
-                 <option value="ALL">Tüm Sınıflar</option>
-                 {classes && classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                 <option value="">Sınıfsızlar</option>
-             </select>
-         </div>
+         <div className="flex-1"><Input placeholder="Öğrenci adı ile ara..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="mb-0" /></div>
+         <div className="md:w-64"><select className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg px-4 py-3 ${colors.text} text-sm focus:outline-none focus:border-orange-500`} value={selectedClassFilter} onChange={e => setSelectedClassFilter(e.target.value)}><option value="ALL">Tüm Sınıflar</option>{classes && classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}<option value="NO_CLASS">Sınıfsızlar</option></select></div>
       </div>
-
-      {/* ÖĞRENCİ LİSTESİ */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredStudents.map(student => (
               <div key={student.id} className={`${colors.bgCard} border ${colors.border} rounded-xl p-6 hover:border-orange-500/50 transition-all group relative ${colors.shadow}`}>
                   <div className="flex items-start justify-between mb-4">
-                      <div className="flex items-center gap-4 cursor-pointer" onClick={() => setSelectedStudentId(student.id)}>
-                          <div className={`w-16 h-16 bg-gradient-to-br ${colors.isDark ? 'from-slate-800 to-slate-700' : 'from-slate-200 to-slate-100'} rounded-full flex items-center justify-center text-2xl font-bold ${colors.text} border ${colors.border}`}>
-                              {student.name.charAt(0)}
-                          </div>
-                          <div>
-                              <h3 className={`text-lg font-bold ${colors.text} group-hover:text-orange-400 transition-colors`}>{student.name}</h3>
-                              <div className={`text-sm ${colors.textSec}`}>{student.grade}</div>
-                              {/* Sınıf Etiketi */}
-                              {student.classId && classes && (
-                                  <span className={`inline-block mt-1 text-[10px] px-2 py-0.5 rounded ${colors.isDark ? 'bg-blue-900/30 text-blue-400' : 'bg-blue-100 text-blue-600'}`}>
-                                      {classes.find(c => c.id === student.classId)?.name || 'Bilinmeyen Sınıf'}
-                                  </span>
-                              )}
-                          </div>
-                      </div>
-                      <div className="flex gap-2">
-                          <button onClick={(e) => {e.stopPropagation(); handleEdit(student)}} className={`p-2 ${colors.textSec} hover:text-blue-400 ${colors.isDark ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-100 hover:bg-slate-200'} rounded-lg`}><Edit2 size={16}/></button>
-                          <button onClick={(e) => handleDeleteRequest(e, student.id)} className={`p-2 ${colors.textSec} hover:text-red-500 ${colors.isDark ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-100 hover:bg-slate-200'} rounded-lg`}><Trash2 size={16}/></button>
-                      </div>
-                  </div>
-                  <div className="space-y-3 mb-6">
-                      <div className={`flex items-center gap-2 text-sm ${colors.textSec}`}><Target size={14} className="text-orange-500"/> <span>Hedef: <span className={colors.text}>{student.target}</span></span></div>
-                      <div className={`flex items-center gap-2 text-sm ${colors.textSec}`}><GraduationCap size={14} className="text-blue-500"/> <span>Okul: <span className={colors.text}>{student.school}</span></span></div>
-                      <div className={`flex items-center gap-2 text-sm ${colors.textSec}`}><Phone size={14} className="text-green-500"/> <span>{student.phone}</span></div>
+                      <div className="flex items-center gap-4 cursor-pointer" onClick={() => setSelectedStudentId(student.id)}><div className={`w-16 h-16 bg-gradient-to-br ${colors.isDark ? 'from-slate-800 to-slate-700' : 'from-slate-200 to-slate-100'} rounded-full flex items-center justify-center text-2xl font-bold ${colors.text} border ${colors.border}`}>{student.name.charAt(0)}</div><div><h3 className={`text-lg font-bold ${colors.text} group-hover:text-orange-400 transition-colors`}>{student.name}</h3><div className={`text-sm ${colors.textSec}`}>{student.grade}</div><span className={`inline-block mt-1 text-[10px] px-2 py-0.5 rounded ${colors.isDark ? 'bg-blue-900/30 text-blue-400' : 'bg-blue-100 text-blue-600'}`}>{student.classId && classes.find(c => c.id === student.classId) ? classes.find(c => c.id === student.classId).name : 'Sınıfsız'}</span></div></div>
+                      <div className="flex gap-2"><button onClick={(e) => {e.stopPropagation(); handleEdit(student)}} className={`p-2 ${colors.textSec} hover:text-blue-400 ${colors.isDark ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-100 hover:bg-slate-200'} rounded-lg`}><Edit2 size={16}/></button><button onClick={(e) => {e.stopPropagation(); e.preventDefault(); setDeleteConfirm(student.id);}} className={`p-2 ${colors.textSec} hover:text-red-500 ${colors.isDark ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-100 hover:bg-slate-200'} rounded-lg`}><Trash2 size={16}/></button></div>
                   </div>
                   <Button className="w-full" variant="secondary" onClick={() => setSelectedStudentId(student.id)}>Profile Git <ChevronRight size={16}/></Button>
               </div>
           ))}
           {filteredStudents.length === 0 && <div className={`col-span-full text-center py-12 ${colors.textSec}`}>Aradığınız kriterlere uygun öğrenci bulunamadı.</div>}
       </div>
-
-      {/* ÖĞRENCİ EKLEME/DÜZENLEME MODALI */}
-      {showModal && (<Modal title={editingId ? "Öğrenci Düzenle" : "Yeni Öğrenci Ekle"} onClose={() => {setShowModal(false); setEditingId(null); setForm({ name: '', grade: '', target: '', phone: '', school: '', username: '', password: '', classId: '' });}}><div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Input label="Ad Soyad" value={form.name} onChange={e => setForm({...form, name: e.target.value})} /><Input label="Sınıf Düzeyi" placeholder="12. Sınıf (YKS)" value={form.grade} onChange={e => setForm({...form, grade: e.target.value})} />
-        
-        {/* YENİ: Sınıf Seçimi */}
-        <div className="col-span-1 md:col-span-2">
-            <label className={`block text-xs font-medium ${colors.textSec} mb-2 uppercase`}>Atanacak Sınıf (Grup)</label>
-            <select className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg p-3 ${colors.text}`} value={form.classId} onChange={e => setForm({...form, classId: e.target.value})}>
-                <option value="">Sınıf Seçiniz (Opsiyonel)</option>
-                {classes && classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-        </div>
-
-        <Input label="Hedef" placeholder="Tıp Fakültesi" value={form.target} onChange={e => setForm({...form, target: e.target.value})} /><Input label="Okul" value={form.school} onChange={e => setForm({...form, school: e.target.value})} /><Input label="Telefon" value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} /><div className={`col-span-1 md:col-span-2 p-4 ${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} rounded-lg border ${colors.border} mt-2`}><h4 className="text-orange-500 font-bold text-xs uppercase mb-3">Giriş Bilgileri</h4><div className="grid grid-cols-2 gap-4"><Input label="Kullanıcı Adı" value={form.username} onChange={e => setForm({...form, username: e.target.value})} /><Input label="Şifre" value={form.password} onChange={e => setForm({...form, password: e.target.value})} /></div></div><div className="col-span-1 md:col-span-2 pt-4"><Button size="large" className="w-full" onClick={handleSave}>Kaydet</Button></div></div></Modal>)}
       
-      {/* YENİ: SINIF YÖNETİM MODALI */}
-      {showClassModal && (
-          <Modal title="Sınıf & Grup Yönetimi" onClose={() => setShowClassModal(false)}>
-              <div className="space-y-6">
-                  <div className="flex gap-2">
-                      <Input placeholder="Yeni Sınıf Adı (Örn: 12-A)" value={newClassName} onChange={e => setNewClassName(e.target.value)} className="mb-0 flex-1" />
-                      <Button onClick={handleAddClass} icon={Plus}>Ekle</Button>
-                  </div>
-                  <div className={`border ${colors.border} rounded-lg overflow-hidden`}>
-                      <table className="w-full text-left text-sm">
-                          <thead className={colors.tableHeader}><tr><th className="p-3">Sınıf Adı</th><th className="p-3 text-right">İşlem</th></tr></thead>
-                          <tbody className={`divide-y ${colors.divider}`}>
-                              {classes && classes.map(c => (
-                                  <tr key={c.id} className={colors.hoverBg}>
-                                      <td className={`p-3 ${colors.text}`}>{c.name}</td>
-                                      <td className="p-3 text-right">
-                                          <button onClick={() => handleDeleteClass(c.id)} className="text-slate-500 hover:text-red-500"><Trash2 size={16}/></button>
-                                      </td>
-                                  </tr>
-                              ))}
-                              {(!classes || classes.length === 0) && <tr><td colSpan="2" className="p-4 text-center text-slate-500">Henüz sınıf oluşturulmadı.</td></tr>}
-                          </tbody>
-                      </table>
-                  </div>
-              </div>
-          </Modal>
-      )}
-
+      {showNotifModal && (<Modal title="Öğrencilerime Duyuru Yap" onClose={() => setShowNotifModal(false)}><div className="space-y-4"><div className="bg-orange-500/10 p-3 rounded text-orange-500 text-xs">Bu duyuru sadece sizin listenizde ekli olan öğrencilere gidecektir.</div><textarea className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg p-3 ${colors.text}`} rows={4} placeholder="Duyuru metni..." value={notifMsg} onChange={e => setNotifMsg(e.target.value)} /><Button onClick={handleSendTeacherNotif} className="w-full">Gönder</Button></div></Modal>)}
+      {showModal && (<Modal title={editingId ? "Öğrenci Düzenle" : "Yeni Öğrenci Ekle"} onClose={() => {setShowModal(false); setEditingId(null); setForm({ name: '', grade: '', target: '', phone: '', school: '', username: '', password: '', classId: '' });}}><div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Input label="Ad Soyad" value={form.name} onChange={e => setForm({...form, name: e.target.value})} /><Input label="Sınıf Düzeyi" value={form.grade} onChange={e => setForm({...form, grade: e.target.value})} /><div className="col-span-1 md:col-span-2"><label className={`block text-xs font-medium ${colors.textSec} mb-2 uppercase`}>Atanacak Sınıf</label><select className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg p-3 ${colors.text}`} value={form.classId} onChange={e => setForm({...form, classId: e.target.value})}><option value="">Sınıfsız</option>{classes && classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div><Input label="Hedef" value={form.target} onChange={e => setForm({...form, target: e.target.value})} /><Input label="Okul" value={form.school} onChange={e => setForm({...form, school: e.target.value})} /><Input label="Telefon" value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} /><div className={`col-span-1 md:col-span-2 p-4 ${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} rounded-lg border ${colors.border} mt-2`}><h4 className="text-orange-500 font-bold text-xs uppercase mb-3">Giriş Bilgileri</h4><div className="grid grid-cols-2 gap-4"><Input label="Kullanıcı Adı" value={form.username} onChange={e => setForm({...form, username: e.target.value})} /><Input label="Şifre" value={form.password} onChange={e => setForm({...form, password: e.target.value})} /></div></div><div className="col-span-1 md:col-span-2 pt-4"><Button size="large" className="w-full" onClick={handleSave}>Kaydet</Button></div></div></Modal>)}
+      {showClassModal && (<Modal title="Sınıf & Grup Yönetimi" onClose={() => setShowClassModal(false)}><div className="space-y-6"><div className="flex gap-2"><Input placeholder="Yeni Sınıf Adı" value={newClassName} onChange={e => setNewClassName(e.target.value)} className="mb-0 flex-1" /><Button onClick={handleAddClass} icon={Plus}>Ekle</Button></div><div className={`border ${colors.border} rounded-lg overflow-hidden`}><table className="w-full text-left text-sm"><thead className={colors.tableHeader}><tr><th className="p-3">Sınıf Adı</th><th className="p-3 text-right">İşlem</th></tr></thead><tbody className={`divide-y ${colors.divider}`}>{classes && classes.map(c => (<tr key={c.id} className={colors.hoverBg}><td className={`p-3 ${colors.text}`}>{c.name}</td><td className="p-3 text-right"><button onClick={() => handleDeleteClass(c.id)} className="text-slate-500 hover:text-red-500"><Trash2 size={16}/></button></td></tr>))}{(!classes || classes.length === 0) && <tr><td colSpan="2" className="p-4 text-center text-slate-500">Henüz sınıf oluşturulmadı.</td></tr>}</tbody></table></div></div></Modal>)}
       <DeleteConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={confirmDelete} />
     </div>
   );
 };
 
-// 1. DERS YÖNETİMİ
-// 1. DERS YÖNETİMİ (GÜNCELLENMİŞ)
-// Parametrelere 'allStudents' eklendi
+// 1. DERS YÖNETİMİ (GÜNCELLENMİŞ: Tablet Uyumlu & Kopyalama Düzeltildi)
 const LessonModule = ({ student, curriculum, setCurriculum, onUpdateStudent, user, allStudents }) => {
   const activeCurriculum = student.curriculum || curriculum;
   const [selectedCourseId, setSelectedCourseId] = useState(activeCurriculum[0]?.id || null);
@@ -597,186 +602,61 @@ const LessonModule = ({ student, curriculum, setCurriculum, onUpdateStudent, use
   const [newItem, setNewItem] = useState({ name: "", parentId: "" }); 
   const [bulkText, setBulkText] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState(null);
-  
-  // YENİ STATE: Kopyalama Modalı
   const [showCopyModal, setShowCopyModal] = useState(false);
-
   const colors = useThemeColors();
   
   if (user.role === 'student') return <div className={`${colors.text} text-center mt-20`}>Bu alana erişim yetkiniz yok.</div>;
 
   const selectedCourse = activeCurriculum.find(c => c.id === selectedCourseId);
 
-  // ... (Eski toggleStatus, handleAddItem, handleMove, requestDelete, confirmDelete, LABELS kodları AYNEN buraya) ...
-  // KOD TEKRARI OLMASIN DİYE KISALTIYORUM, MEVCUT FONKSİYONLARI KORU.
-  const toggleStatus = (topicId, type) => { /* ... */ const currentStatus = student.lessons[topicId] || {}; const newStatus = { ...currentStatus, [type]: !currentStatus[type] }; onUpdateStudent({ ...student, lessons: { ...student.lessons, [topicId]: newStatus } }); };
-  const handleAddItem = () => { /* ... */ let updatedCurriculum = [...activeCurriculum]; if (showAddModal === 'course') { if(!newItem.name) return; const newCourse = { id: Date.now().toString(), name: newItem.name, units: [] }; updatedCurriculum = [...updatedCurriculum, newCourse]; setSelectedCourseId(newCourse.id); } else if (showAddModal === 'unit' || showAddModal === 'topic') { const names = bulkText ? bulkText.split('\n').filter(n => n.trim()) : (newItem.name ? [newItem.name] : []); if(names.length === 0) return; updatedCurriculum = updatedCurriculum.map(c => { if (c.id === selectedCourseId) { if (showAddModal === 'unit') { const newUnits = names.map(name => ({ id: Math.random().toString(36).substr(2, 9), name, topics: [] })); return { ...c, units: [...c.units, ...newUnits] }; } else { return { ...c, units: c.units.map(u => u.id === newItem.parentId ? { ...u, topics: [...u.topics, ...names] } : u) }; } } return c; }); } onUpdateStudent({ ...student, curriculum: updatedCurriculum }); setShowAddModal(null); setNewItem({ name: "", parentId: "" }); setBulkText(""); };
-  const handleMove = (e, type, index, direction, parentId = null, subParentId = null) => { /* ... */ e.stopPropagation(); let updated = [...activeCurriculum]; const swap = (arr, i, dir) => { if (dir === 'up' && i > 0) { [arr[i], arr[i - 1]] = [arr[i - 1], arr[i]]; } else if (dir === 'down' && i < arr.length - 1) { [arr[i], arr[i + 1]] = [arr[i + 1], arr[i]]; } return arr; }; if (type === 'course') { updated = swap(updated, index, direction); } else if (type === 'unit') { const courseIndex = updated.findIndex(c => c.id === selectedCourseId); if (courseIndex > -1) { let units = [...updated[courseIndex].units]; units = swap(units, index, direction); updated[courseIndex] = { ...updated[courseIndex], units }; } } else if (type === 'topic') { const courseIndex = updated.findIndex(c => c.id === selectedCourseId); if (courseIndex > -1) { const unitIndex = updated[courseIndex].units.findIndex(u => u.id === parentId); if (unitIndex > -1) { let topics = [...updated[courseIndex].units[unitIndex].topics]; topics = swap(topics, index, direction); const newUnits = [...updated[courseIndex].units]; newUnits[unitIndex] = { ...newUnits[unitIndex], topics }; updated[courseIndex] = { ...updated[courseIndex], units: newUnits }; } } } onUpdateStudent({ ...student, curriculum: updated }); };
+  // Eski fonksiyonlar (kısaltıldı)
+  const toggleStatus = (topicId, type) => { const currentStatus = student.lessons[topicId] || {}; const newStatus = { ...currentStatus, [type]: !currentStatus[type] }; onUpdateStudent({ ...student, lessons: { ...student.lessons, [topicId]: newStatus } }); };
+  const handleAddItem = () => { let updatedCurriculum = [...activeCurriculum]; if (showAddModal === 'course') { if(!newItem.name) return; const newCourse = { id: Date.now().toString(), name: newItem.name, units: [] }; updatedCurriculum = [...updatedCurriculum, newCourse]; setSelectedCourseId(newCourse.id); } else if (showAddModal === 'unit' || showAddModal === 'topic') { const names = bulkText ? bulkText.split('\n').filter(n => n.trim()) : (newItem.name ? [newItem.name] : []); if(names.length === 0) return; updatedCurriculum = updatedCurriculum.map(c => { if (c.id === selectedCourseId) { if (showAddModal === 'unit') { const newUnits = names.map(name => ({ id: Math.random().toString(36).substr(2, 9), name, topics: [] })); return { ...c, units: [...c.units, ...newUnits] }; } else { return { ...c, units: c.units.map(u => u.id === newItem.parentId ? { ...u, topics: [...u.topics, ...names] } : u) }; } } return c; }); } onUpdateStudent({ ...student, curriculum: updatedCurriculum }); setShowAddModal(null); setNewItem({ name: "", parentId: "" }); setBulkText(""); };
+  const handleMove = (e, type, index, direction, parentId = null, subParentId = null) => { e.stopPropagation(); let updated = [...activeCurriculum]; const swap = (arr, i, dir) => { if (dir === 'up' && i > 0) { [arr[i], arr[i - 1]] = [arr[i - 1], arr[i]]; } else if (dir === 'down' && i < arr.length - 1) { [arr[i], arr[i + 1]] = [arr[i + 1], arr[i]]; } return arr; }; if (type === 'course') { updated = swap(updated, index, direction); } else if (type === 'unit') { const courseIndex = updated.findIndex(c => c.id === selectedCourseId); if (courseIndex > -1) { let units = [...updated[courseIndex].units]; units = swap(units, index, direction); updated[courseIndex] = { ...updated[courseIndex], units }; } } else if (type === 'topic') { const courseIndex = updated.findIndex(c => c.id === selectedCourseId); if (courseIndex > -1) { const unitIndex = updated[courseIndex].units.findIndex(u => u.id === parentId); if (unitIndex > -1) { let topics = [...updated[courseIndex].units[unitIndex].topics]; topics = swap(topics, index, direction); const newUnits = [...updated[courseIndex].units]; newUnits[unitIndex] = { ...newUnits[unitIndex], topics }; updated[courseIndex] = { ...updated[courseIndex], units: newUnits }; } } } onUpdateStudent({ ...student, curriculum: updated }); };
   const requestDelete = (e, type, id, parentId = null) => { e.stopPropagation(); e.preventDefault(); setDeleteConfirm({ type, id, parentId }); };
-  const confirmDelete = () => { /* ... */ if (!deleteConfirm) return; const { type, id, parentId } = deleteConfirm; let updatedCurriculum = [...activeCurriculum]; if (type === 'course') { updatedCurriculum = updatedCurriculum.filter(c => c.id !== id); if(selectedCourseId === id) setSelectedCourseId(updatedCurriculum[0]?.id || null); } else if (type === 'unit') { updatedCurriculum = updatedCurriculum.map(c => c.id === selectedCourseId ? { ...c, units: c.units.filter(u => u.id !== id) } : c); } else if (type === 'topic') { updatedCurriculum = updatedCurriculum.map(c => c.id === selectedCourseId ? { ...c, units: c.units.map(u => u.id === parentId ? { ...u, topics: u.topics.filter(t => t !== id) } : u) } : c); } onUpdateStudent({ ...student, curriculum: updatedCurriculum }); setDeleteConfirm(null); };
+  const confirmDelete = () => { if (!deleteConfirm) return; const { type, id, parentId } = deleteConfirm; let updatedCurriculum = [...activeCurriculum]; if (type === 'course') { updatedCurriculum = updatedCurriculum.filter(c => c.id !== id); if(selectedCourseId === id) setSelectedCourseId(updatedCurriculum[0]?.id || null); } else if (type === 'unit') { updatedCurriculum = updatedCurriculum.map(c => c.id === selectedCourseId ? { ...c, units: c.units.filter(u => u.id !== id) } : c); } else if (type === 'topic') { updatedCurriculum = updatedCurriculum.map(c => c.id === selectedCourseId ? { ...c, units: c.units.map(u => u.id === parentId ? { ...u, topics: u.topics.filter(t => t !== id) } : u) } : c); } onUpdateStudent({ ...student, curriculum: updatedCurriculum }); setDeleteConfirm(null); };
   const LABELS = [{ id: 'konu', label: 'Konu', color: 'bg-emerald-500' }, { id: 'soru', label: 'Soru', color: 'bg-blue-500' }, { id: 't1', label: '1. Tekrar', color: 'bg-purple-500' }, { id: 't2', label: '2. Tekrar', color: 'bg-pink-500' }, { id: 't3', label: '3. Tekrar', color: 'bg-orange-500' }];
 
-  // YENİ FONKSİYON: Müfredat Kopyalama
   const handleCopyFromStudent = (targetStudentId) => {
-      if(!window.confirm("Bu işlem mevcut öğrencinin ders programını tamamen silecek ve seçilen öğrencininkiyle değiştirecektir. Emin misiniz?")) return;
+      if(!window.confirm("Bu işlem mevcut öğrencinin ders programını silecek ve seçilen öğrencininkiyle değiştirecektir. Emin misiniz?")) return;
       const targetStudent = allStudents.find(s => s.id === targetStudentId);
       if(targetStudent && targetStudent.curriculum) {
           onUpdateStudent({ ...student, curriculum: targetStudent.curriculum });
           setShowCopyModal(false);
           alert("Ders programı başarıyla kopyalandı.");
-      } else {
-          alert("Seçilen öğrencinin özel bir ders programı yok veya bulunamadı.");
-      }
+      } else { alert("Seçilen öğrencinin özel bir ders programı yok."); }
   };
 
   return (
-    <div className="flex flex-col md:flex-row gap-6 h-auto md:h-[calc(100vh-140px)] animate-fade-in">
-        {/* SOL MENÜ: DERSLER */}
-        <div className="w-full md:w-1/4 flex flex-col gap-2 max-h-60 md:max-h-full overflow-y-auto pr-2 custom-scrollbar">
-            <div className="flex justify-between items-center mb-2">
-                <h3 className="text-orange-500 font-bold">Dersler</h3>
-                <div className="flex gap-1">
-                    {/* YENİ BUTON: Kopyalama */}
-                    <Button size="small" variant="secondary" icon={RefreshCw} onClick={() => setShowCopyModal(true)} title="Başka Öğrenciden Kopyala" />
-                    <Button size="small" icon={Plus} onClick={() => setShowAddModal('course')} />
-                </div>
-            </div>
-            {/* ... (Eski ders listeleme kodu aynı) ... */}
-            {activeCurriculum.map((c, idx) => (
-                <div key={c.id} className="flex gap-1 items-center">
-                    <button onClick={() => setSelectedCourseId(c.id)} className={`flex-1 p-3 rounded-lg text-left transition-all truncate ${selectedCourseId === c.id ? `bg-slate-800 border-orange-500 text-white border` : `${colors.bgCard} ${colors.border} ${colors.textSec}`}`}>{c.name}</button>
-                    <div className="flex flex-col gap-1">
-                         <button onClick={(e) => handleMove(e, 'course', idx, 'up')} disabled={idx === 0} className={`p-1 ${colors.bgCard} border ${colors.border} rounded text-slate-500 hover:text-orange-500 disabled:opacity-30`}><ArrowUp size={10}/></button>
-                         <button onClick={(e) => handleMove(e, 'course', idx, 'down')} disabled={idx === activeCurriculum.length - 1} className={`p-1 ${colors.bgCard} border ${colors.border} rounded text-slate-500 hover:text-orange-500 disabled:opacity-30`}><ArrowDown size={10}/></button>
-                    </div>
-                    <button onClick={(e) => requestDelete(e, 'course', c.id)} className={`p-3 ${colors.bgCard} ${colors.border} border rounded-lg text-slate-500 hover:text-red-500 hover:border-red-500/50 group h-full flex items-center`}><Trash2 size={16} className="group-hover:text-red-500"/></button>
-                </div>
-            ))}
+    // LG BREAKPOINT (Tablet için dikey, PC için yatay)
+    <div className="flex flex-col lg:flex-row gap-6 h-auto lg:h-[calc(100vh-140px)] animate-fade-in">
+        <div className="w-full lg:w-1/4 flex flex-col gap-2 max-h-60 lg:max-h-full overflow-y-auto pr-2 custom-scrollbar">
+            <div className="flex justify-between items-center mb-2"><h3 className="text-orange-500 font-bold">Dersler</h3><div className="flex gap-1"><Button size="small" variant="secondary" icon={RefreshCw} onClick={() => setShowCopyModal(true)} title="Kopyala" /><Button size="small" icon={Plus} onClick={() => setShowAddModal('course')} /></div></div>
+            {activeCurriculum.map((c, idx) => (<div key={c.id} className="flex gap-1 items-center"><button onClick={() => setSelectedCourseId(c.id)} className={`flex-1 p-3 rounded-lg text-left transition-all truncate ${selectedCourseId === c.id ? `bg-slate-800 border-orange-500 text-white border` : `${colors.bgCard} ${colors.border} ${colors.textSec}`}`}>{c.name}</button><div className="flex flex-col gap-1"><button onClick={(e) => handleMove(e, 'course', idx, 'up')} disabled={idx === 0} className={`p-1 ${colors.bgCard} border ${colors.border} rounded text-slate-500 hover:text-orange-500 disabled:opacity-30`}><ArrowUp size={10}/></button><button onClick={(e) => handleMove(e, 'course', idx, 'down')} disabled={idx === activeCurriculum.length - 1} className={`p-1 ${colors.bgCard} border ${colors.border} rounded text-slate-500 hover:text-orange-500 disabled:opacity-30`}><ArrowDown size={10}/></button></div><button onClick={(e) => requestDelete(e, 'course', c.id)} className={`p-3 ${colors.bgCard} ${colors.border} border rounded-lg text-slate-500 hover:text-red-500 hover:border-red-500/50 group h-full flex items-center`}><Trash2 size={16} className="group-hover:text-red-500"/></button></div>))}
         </div>
-
-        {/* SAĞ TARAF: İÇERİK (Değişmedi, sadece context'i korumak için kısa tutuyorum) */}
         <div className={`flex-1 ${colors.bgCardTransparent} border ${colors.border} rounded-xl p-6 overflow-y-auto custom-scrollbar`}>
-             {/* ... (Orjinal içerik aynen kalacak) ... */}
-             {selectedCourse ? (
-             <>
-                 <div className={`flex flex-col md:flex-row justify-between items-start md:items-center mb-6 pb-4 border-b ${colors.border} gap-4`}>
-                     <h2 className={`text-xl font-bold ${colors.text}`}>{selectedCourse.name}</h2>
-                     <div className="flex gap-3">
-                         <Button size="small" variant="secondary" icon={Plus} onClick={() => setShowAddModal('unit')}>Ünite Ekle</Button>
-                         <Button size="small" variant="secondary" icon={Plus} onClick={() => { setNewItem({...newItem, parentId: selectedCourse.units[0]?.id}); setShowAddModal('topic'); }}>Konu Ekle</Button>
-                     </div>
-                 </div>
-                 {/* ... Üniteler ve Konular döngüsü (Eski kod) ... */}
-                 {selectedCourse.units.map((unit, uIdx) => (
-                    <div key={unit.id} className={`mb-6 ${colors.bgCard} border ${colors.border} rounded-lg overflow-hidden ${colors.shadow}`}>
-                        <div className={`${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} p-3 flex justify-between items-center`}>
-                            <h4 className="text-orange-500 font-bold">{unit.name}</h4>
-                            <div className="flex items-center gap-2">
-                                <button onClick={(e) => handleMove(e, 'unit', uIdx, 'up')} disabled={uIdx === 0} className={`p-1 hover:bg-slate-700 rounded text-slate-500 hover:text-orange-500 disabled:opacity-30`}><ArrowUp size={14}/></button>
-                                <button onClick={(e) => handleMove(e, 'unit', uIdx, 'down')} disabled={uIdx === selectedCourse.units.length - 1} className={`p-1 hover:bg-slate-700 rounded text-slate-500 hover:text-orange-500 disabled:opacity-30`}><ArrowDown size={14}/></button>
-                                <div className="w-px h-4 bg-slate-500/30 mx-1"></div>
-                                <button onClick={(e) => requestDelete(e, 'unit', unit.id)} className="text-slate-500 hover:text-red-500 p-2"><Trash2 size={14}/></button>
-                            </div>
-                        </div>
-                        <div className={`divide-y ${colors.divider}`}>
-                            {unit.topics.map((topic, tIdx) => { 
-                                const key = `${selectedCourse.id}-${unit.id}-${tIdx}`;
-                                const status = student.lessons[key] || {}; 
-                                return (
-                                <div key={tIdx} className={`flex flex-col md:flex-row justify-between items-start md:items-center p-3 ${colors.hoverBg} transition-colors gap-2 group`}>
-                                    <div className="flex items-center gap-2">
-                                        <div className="flex flex-col opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button onClick={(e) => handleMove(e, 'topic', tIdx, 'up', unit.id)} disabled={tIdx === 0} className="text-slate-400 hover:text-orange-500 disabled:opacity-0"><ArrowUp size={10}/></button>
-                                            <button onClick={(e) => handleMove(e, 'topic', tIdx, 'down', unit.id)} disabled={tIdx === unit.topics.length - 1} className="text-slate-400 hover:text-orange-500 disabled:opacity-0"><ArrowDown size={10}/></button>
-                                        </div>
-                                        <span className={`${colors.text} text-sm font-medium`}>{topic}</span>
-                                    </div>
-                                    <div className="flex items-center gap-4 w-full md:w-auto justify-between md:justify-end">
-                                        <div className="flex gap-3 mr-4">
-                                            {LABELS.map(lbl => (
-                                                <div key={lbl.id} className="flex flex-col items-center gap-1 cursor-pointer group/lbl" onClick={() => toggleStatus(key, lbl.id)}>
-                                                    <div className={`w-5 h-5 rounded-full border border-slate-600 flex items-center justify-center transition-all ${status[lbl.id] ? `${lbl.color} border-transparent` : `hover:border-slate-400 ${colors.isDark ? 'bg-slate-800' : 'bg-white'}`}`}>
-                                                        {status[lbl.id] && <Check size={10} className="text-white"/>}
-                                                    </div>
-                                                    <span className={`text-[9px] ${colors.textSec} font-medium whitespace-nowrap group-hover/lbl:${colors.text} transition-colors`}>{lbl.label}</span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                        <button onClick={(e) => requestDelete(e, 'topic', topic, unit.id)} className="text-slate-600 hover:text-red-500 p-2"><Trash2 size={14}/></button>
-                                    </div>
-                                </div>
-                                ) 
-                            })}
-                        </div>
-                    </div>
-                ))}
-             </>) : <div className={`${colors.textSec} text-center py-20`}>Ders seçiniz veya ekleyiniz.</div>}
+             {selectedCourse ? ( <> <div className={`flex flex-col md:flex-row justify-between items-start md:items-center mb-6 pb-4 border-b ${colors.border} gap-4`}> <h2 className={`text-xl font-bold ${colors.text}`}>{selectedCourse.name}</h2> <div className="flex gap-3"> <Button size="small" variant="secondary" icon={Plus} onClick={() => setShowAddModal('unit')}>Ünite Ekle</Button> <Button size="small" variant="secondary" icon={Plus} onClick={() => { setNewItem({...newItem, parentId: selectedCourse.units[0]?.id}); setShowAddModal('topic'); }}>Konu Ekle</Button> </div> </div>
+                 {selectedCourse.units.map((unit, uIdx) => ( <div key={unit.id} className={`mb-6 ${colors.bgCard} border ${colors.border} rounded-lg overflow-hidden ${colors.shadow}`}> <div className={`${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} p-3 flex justify-between items-center`}> <h4 className="text-orange-500 font-bold">{unit.name}</h4> <div className="flex items-center gap-2"> <button onClick={(e) => handleMove(e, 'unit', uIdx, 'up')} disabled={uIdx === 0} className={`p-1 hover:bg-slate-700 rounded text-slate-500 hover:text-orange-500 disabled:opacity-30`}><ArrowUp size={14}/></button> <button onClick={(e) => handleMove(e, 'unit', uIdx, 'down')} disabled={uIdx === selectedCourse.units.length - 1} className={`p-1 hover:bg-slate-700 rounded text-slate-500 hover:text-orange-500 disabled:opacity-30`}><ArrowDown size={14}/></button> <div className="w-px h-4 bg-slate-500/30 mx-1"></div> <button onClick={(e) => requestDelete(e, 'unit', unit.id)} className="text-slate-500 hover:text-red-500 p-2"><Trash2 size={14}/></button> </div> </div> <div className={`divide-y ${colors.divider}`}> {unit.topics.map((topic, tIdx) => { const key = `${selectedCourse.id}-${unit.id}-${tIdx}`; const status = student.lessons[key] || {}; return ( <div key={tIdx} className={`flex flex-col md:flex-row justify-between items-start md:items-center p-3 ${colors.hoverBg} transition-colors gap-2 group`}> <div className="flex items-center gap-2"> <div className="flex flex-col opacity-0 group-hover:opacity-100 transition-opacity"> <button onClick={(e) => handleMove(e, 'topic', tIdx, 'up', unit.id)} disabled={tIdx === 0} className="text-slate-400 hover:text-orange-500 disabled:opacity-0"><ArrowUp size={10}/></button> <button onClick={(e) => handleMove(e, 'topic', tIdx, 'down', unit.id)} disabled={tIdx === unit.topics.length - 1} className="text-slate-400 hover:text-orange-500 disabled:opacity-0"><ArrowDown size={10}/></button> </div> <span className={`${colors.text} text-sm font-medium`}>{topic}</span> </div> <div className="flex items-center gap-4 w-full md:w-auto justify-between md:justify-end"> <div className="flex gap-3 mr-4"> {LABELS.map(lbl => ( <div key={lbl.id} className="flex flex-col items-center gap-1 cursor-pointer group/lbl" onClick={() => toggleStatus(key, lbl.id)}> <div className={`w-5 h-5 rounded-full border border-slate-600 flex items-center justify-center transition-all ${status[lbl.id] ? `${lbl.color} border-transparent` : `hover:border-slate-400 ${colors.isDark ? 'bg-slate-800' : 'bg-white'}`}`}> {status[lbl.id] && <Check size={10} className="text-white"/>} </div> <span className={`text-[9px] ${colors.textSec} font-medium whitespace-nowrap group-hover/lbl:${colors.text} transition-colors`}>{lbl.label}</span> </div> ))} </div> <button onClick={(e) => requestDelete(e, 'topic', topic, unit.id)} className="text-slate-600 hover:text-red-500 p-2"><Trash2 size={14}/></button> </div> </div> ) })} </div> </div> ))} </>) : <div className={`${colors.textSec} text-center py-20`}>Ders seçiniz veya ekleyiniz.</div>}
         </div>
-       
-        {showAddModal && (<Modal title={showAddModal === 'course' ? 'Yeni Ders' : showAddModal === 'unit' ? 'Yeni Ünite' : 'Yeni Konu'} onClose={() => setShowAddModal(null)}>
-            {/* ... (Eski modal içeriği aynen kalacak) ... */}
-            <div className="space-y-4">
-                {showAddModal === 'topic' && (
-                    <div>
-                        <label className={`block text-sm ${colors.textSec} mb-1`}>Hangi Üniteye?</label>
-                        <select className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg p-3 ${colors.text}`} value={newItem.parentId} onChange={e => setNewItem({...newItem, parentId: e.target.value})}>
-                            <option value="">Seçiniz</option>
-                            {selectedCourse?.units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                        </select>
-                    </div>
-                )}
-                {showAddModal === 'course' ? (
-                    <Input label="Ders Adı" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} />
-                ) : (
-                    <div>
-                        <label className={`block text-xs font-medium ${colors.textSec} mb-2 uppercase`}>{showAddModal === 'unit' ? 'Ünite İsimleri' : 'Konu İsimleri'} (Her satıra bir tane)</label>
-                        <textarea className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg p-3 ${colors.text} h-32 focus:border-orange-500 outline-none`} value={bulkText} onChange={e => setBulkText(e.target.value)}></textarea>
-                    </div>
-                )}
-                <Button onClick={handleAddItem} className="w-full mt-4">Kaydet</Button>
-            </div>
-        </Modal>)}
-
-        {/* YENİ: KOPYALAMA MODALI */}
-        {showCopyModal && (
-            <Modal title="Müfredat Kopyala" onClose={() => setShowCopyModal(false)}>
-                <div className="space-y-4">
-                    <div className="bg-red-500/10 p-4 rounded text-red-500 text-sm">
-                        Dikkat: Bu işlem, şu anki öğrencinin tüm ders yapısını silecek ve seçtiğiniz öğrencinin ders yapısını (dersler, üniteler, konular) buraya aktaracaktır.
-                    </div>
-                    <div className="max-h-60 overflow-y-auto space-y-2">
-                        {allStudents
-                            .filter(s => s.id !== student.id)
-                            .map(s => (
-                                <button key={s.id} onClick={() => handleCopyFromStudent(s.id)} className={`w-full text-left p-3 rounded border ${colors.border} ${colors.hoverBg} flex justify-between items-center`}>
-                                    <span className={colors.text}>{s.name}</span>
-                                    <span className={`text-xs ${colors.textSec}`}>{s.grade}</span>
-                                </button>
-                            ))
-                        }
-                        {allStudents.filter(s => s.id !== student.id).length === 0 && <div className={`text-center ${colors.textSec} py-2`}>Başka öğrenci bulunamadı.</div>}
-                    </div>
-                </div>
-            </Modal>
-        )}
-
+        {showAddModal && (<Modal title={showAddModal === 'course' ? 'Yeni Ders' : showAddModal === 'unit' ? 'Yeni Ünite' : 'Yeni Konu'} onClose={() => setShowAddModal(null)}> <div className="space-y-4"> {showAddModal === 'topic' && ( <div> <label className={`block text-sm ${colors.textSec} mb-1`}>Hangi Üniteye?</label> <select className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg p-3 ${colors.text}`} value={newItem.parentId} onChange={e => setNewItem({...newItem, parentId: e.target.value})}> <option value="">Seçiniz</option> {selectedCourse?.units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)} </select> </div> )} {showAddModal === 'course' ? ( <Input label="Ders Adı" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} /> ) : ( <div> <label className={`block text-xs font-medium ${colors.textSec} mb-2 uppercase`}>{showAddModal === 'unit' ? 'Ünite İsimleri' : 'Konu İsimleri'} (Her satıra bir tane)</label> <textarea className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg p-3 ${colors.text} h-32 focus:border-orange-500 outline-none`} value={bulkText} onChange={e => setBulkText(e.target.value)}></textarea> </div> )} <Button onClick={handleAddItem} className="w-full mt-4">Kaydet</Button> </div> </Modal>)}
+        {showCopyModal && (<Modal title="Müfredat Kopyala" onClose={() => setShowCopyModal(false)}> <div className="space-y-4"> <div className="bg-red-500/10 p-4 rounded text-red-500 text-sm"> Dikkat: Bu işlem, şu anki öğrencinin tüm ders yapısını silecek ve seçtiğiniz öğrencinin ders yapısını (dersler, üniteler, konular) buraya aktaracaktır. </div> <div className="max-h-60 overflow-y-auto space-y-2"> {allStudents .filter(s => s.id !== student.id) .map(s => ( <button key={s.id} onClick={() => handleCopyFromStudent(s.id)} className={`w-full text-left p-3 rounded border ${colors.border} ${colors.hoverBg} flex justify-between items-center`}> <span className={colors.text}>{s.name}</span> <span className={`text-xs ${colors.textSec}`}>{s.grade}</span> </button> )) } {allStudents.filter(s => s.id !== student.id).length === 0 && <div className={`text-center ${colors.textSec} py-2`}>Kopyalanacak başka öğrenciniz yok.</div>} </div> </div> </Modal>)}
         <DeleteConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={confirmDelete} />
     </div>
   );
 };
 
-// 2. HAFTALIK PROGRAM
-const ScheduleModule = ({ student, curriculum, onUpdateStudent, user }) => {
+// 2. HAFTALIK PROGRAM (DÜZELTİLDİ: Arşivleme & Izgara Görünümü)
+const ScheduleModule = ({ student, curriculum, onUpdateStudent, user, students, classes }) => {
   const activeCurriculum = student.curriculum || curriculum;
-  // Çoklu gün seçimi için form yapısı güncellendi: day -> days array
   const [form, setForm] = useState({ days: [], courseId: '', unitId: '', topic: '', type: 'soru', count: '', source: '', note: '' });
   const [editingId, setEditingId] = useState(null); 
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [showQuickModal, setShowQuickModal] = useState(false);
-  // Quick Assign için de çoklu gün seçimi
   const [quickForm, setQuickForm] = useState({ text: '', days: [], count: '', source: '' });
-  const [isEditMode, setIsEditMode] = useState(false); // Düzenleme modu görünürlüğü
-  const [expandedArchive, setExpandedArchive] = useState(null); // Arşiv detayını açmak için
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [expandedArchive, setExpandedArchive] = useState(null);
+  const [assignToClass, setAssignToClass] = useState(false);
+  const [selectedClassId, setSelectedClassId] = useState(student.classId || '');
   const colors = useThemeColors();
 
   const selectedCourse = activeCurriculum.find(c => c.id === form.courseId);
@@ -784,276 +664,104 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user }) => {
   const availableResources = student.resources ? student.resources.filter(r => r.courseId === form.courseId) : [];
   const assignments = student.assignments || [];
   
-  // İstatistiklerde opsiyonel 'count' değerini güvenli parse etme
   const weeklySolvedQuestions = assignments.filter(a => (a.type === 'soru' || a.count) && a.status === 'completed').reduce((acc, curr) => acc + (parseInt(curr.count) || 0), 0);
   const weeklyTaskCount = assignments.length;
   const weeklyCompletedCount = assignments.filter(a => a.status === 'completed').length;
   const completionRate = weeklyTaskCount > 0 ? Math.round((weeklyCompletedCount / weeklyTaskCount) * 100) : 0;
-  const monthlySolved = (student.stats?.monthlySolved || 0) + weeklySolvedQuestions;
-  const allTimeSolved = (student.stats?.totalSolved || 0) + weeklySolvedQuestions;
   
-  const handleAssign = () => { 
+  const assignToStudent = (targetStudent, newAssignments) => { onUpdateStudent({ ...targetStudent, assignments: [...(targetStudent.assignments || []), ...newAssignments] }); };
+
+  const handleAssign = async () => { 
       if(!form.courseId || !form.topic) return alert("Lütfen ders ve konu seçiniz."); 
       if(form.days.length === 0) return alert("En az bir gün seçiniz.");
-      
-      let newAssignments = [...assignments];
-
-      if (editingId) { 
-         // Düzenleme modunda tek bir kayıt güncellenir (gün değişebilir ama tekil kalır)
-         // Not: Çoklu gün seçimi yeni ekleme içindir. Düzenlemede tekil gün mantığını koruyabiliriz veya onu da geliştirebiliriz.
-         // Mevcut mantıkta id ile tek bir kayıt buluyoruz.
-         const day = form.days[0]; // Düzenlemede ilk seçili günü alalım
-         newAssignments = newAssignments.map(a => a.id === editingId ? { ...a, ...form, day: day, subject: selectedCourse.name } : a); 
-         setEditingId(null); 
-      } else { 
-         // Çoklu gün seçimi ile toplu ekleme
-         form.days.forEach(day => {
-             const newAssignment = { 
-                 id: Date.now() + Math.random(), // Unique ID 
-                 status: 'pending', 
-                 subject: selectedCourse.name, 
-                 ...form,
-                 day: day // Her kayıt için ayrı gün
-             };
-             // days arrayini kaydetmemize gerek yok, her obje kendi 'day' alanına sahip
-             delete newAssignment.days;
-             newAssignments.push(newAssignment);
-         });
-      } 
-      
-      onUpdateStudent({ ...student, assignments: newAssignments });
+      const assignmentsToAdd = [];
+      form.days.forEach(day => { assignmentsToAdd.push({ id: Date.now() + Math.random(), status: 'pending', subject: selectedCourse.name, ...form, day }); });
+      if (assignToClass && selectedClassId) {
+          if(!window.confirm(`Bu ödev sınıftaki tüm öğrencilere eklenecek.`)) return;
+          const classStudents = students.filter(s => s.classId === selectedClassId);
+          for (const s of classStudents) {
+              const sAssignments = assignmentsToAdd.map(a => ({...a, id: Date.now() + Math.random()}));
+              if(isFirebaseActive) { await setDoc(doc(db, "students", s.id), { assignments: [...(s.assignments || []), ...sAssignments] }, { merge: true }); } 
+              else { assignToStudent(s, sAssignments); }
+          }
+          alert("Toplu atama yapıldı.");
+      } else {
+          let newAssignments = [...assignments];
+          if (editingId) { const day = form.days[0]; newAssignments = newAssignments.map(a => a.id === editingId ? { ...a, ...form, day, subject: selectedCourse.name } : a); onUpdateStudent({ ...student, assignments: newAssignments }); } 
+          else { onUpdateStudent({ ...student, assignments: [...assignments, ...assignmentsToAdd] }); }
+      }
       setForm(prev => ({ ...prev, count: '', source: '', unitId: '', topic: '', note: '', days: [] })); 
   };
   
-  // HIZLI GÖREV EKLEME
-  const handleQuickAssign = () => {
-    if(!quickForm.text) return alert("Görev içeriği giriniz.");
-    if(quickForm.days.length === 0) return alert("En az bir gün seçiniz.");
-    
-    // 1. Mevcut ödev listesinin bir kopyasını al
-    let newAssignments = [...assignments];
-
-    // 2. Seçilen her gün için döngü kurarak görev ekle
-    quickForm.days.forEach(day => {
-        const newAssignment = { 
-            id: Date.now() + Math.random(), 
-            status: 'pending', 
-            subject: 'Ek Görev', 
-            topic: quickForm.text, 
-            day: day, 
-            type: 'ozel', 
-            count: quickForm.count,   
-            source: quickForm.source  
-        };
-        newAssignments.push(newAssignment);
-    });
-
-    // 3. Öğrenci verisini güncelle
-    onUpdateStudent({ ...student, assignments: newAssignments });
-    setShowQuickModal(false);
-    setQuickForm({ text: '', days: [], count: '', source: '' });
+  const handleQuickAssign = async () => {
+    if(!quickForm.text) return alert("Görev giriniz."); if(quickForm.days.length === 0) return alert("Gün seçiniz.");
+    const assignmentsToAdd = [];
+    quickForm.days.forEach(day => { assignmentsToAdd.push({ id: Date.now() + Math.random(), status: 'pending', subject: 'Ek Görev', topic: quickForm.text, day, type: 'ozel', count: quickForm.count, source: quickForm.source }); });
+    if (assignToClass && selectedClassId) {
+        if(!window.confirm(`Toplu atama yapılsın mı?`)) return;
+        const classStudents = students.filter(s => s.classId === selectedClassId);
+        for (const s of classStudents) {
+            const sAssignments = assignmentsToAdd.map(a => ({...a, id: Date.now() + Math.random()}));
+            if(isFirebaseActive) await setDoc(doc(db, "students", s.id), { assignments: [...(s.assignments || []), ...sAssignments] }, { merge: true });
+            else assignToStudent(s, sAssignments);
+        }
+    } else { onUpdateStudent({ ...student, assignments: [...assignments, ...assignmentsToAdd] }); }
+    setShowQuickModal(false); setQuickForm({ text: '', days: [], count: '', source: '' });
   };
 
-  const handleEdit = (task) => { 
-      const course = activeCurriculum.find(c => c.name === task.subject); 
-      setForm({ 
-          days: [task.day], // Düzenlemede mevcut günü seçili getir
-          courseId: course ? course.id : '', 
-          unitId: task.unitId || '', 
-          topic: task.topic, 
-          type: task.type, 
-          count: task.count, 
-          source: task.source || '', 
-          note: task.note || '' 
-      }); 
-      setEditingId(task.id); 
-      window.scrollTo(0,0); 
-  };
-  
+  const handleEdit = (task) => { const course = activeCurriculum.find(c => c.name === task.subject); setForm({ days: [task.day], courseId: course ? course.id : '', unitId: task.unitId || '', topic: task.topic, type: task.type, count: task.count, source: task.source || '', note: task.note || '' }); setEditingId(task.id); window.scrollTo(0,0); };
   const handleCancelEdit = () => { setEditingId(null); setForm(prev => ({ ...prev, count: '', source: '', unitId: '', topic: '', note: '', days: [] })); };
   const toggleTaskStatus = (id) => { const updated = assignments.map(a => a.id === id ? { ...a, status: a.status === 'completed' ? 'pending' : 'completed' } : a); let newStats = { ...student.stats }; const task = assignments.find(a => a.id === id); if (task && task.status !== 'completed') { newStats.xp = (newStats.xp || 0) + 50; newStats.level = Math.floor(newStats.xp / 1000) + 1; } onUpdateStudent({ ...student, assignments: updated, stats: newStats }); };
   const requestDelete = (e, id) => { e.stopPropagation(); e.preventDefault(); setDeleteConfirm(id); };
   const confirmDelete = () => { if (deleteConfirm) { const filtered = assignments.filter(a => a.id !== deleteConfirm); onUpdateStudent({ ...student, assignments: filtered }); setDeleteConfirm(null); } };
-  const handleDeleteArchive = (weekId) => { if(window.confirm("Bu arşiv kaydını kalıcı olarak silmek istediğinize emin misiniz?")) { const updatedArchives = student.pastWeeks.filter(w => w.id !== weekId); onUpdateStudent({ ...student, pastWeeks: updatedArchives }); } };
+  const handleDeleteArchive = (weekId) => { if(window.confirm("Arşiv silinsin mi?")) { const updatedArchives = student.pastWeeks.filter(w => w.id !== weekId); onUpdateStudent({ ...student, pastWeeks: updatedArchives }); } };
   
+  // --- ARŞİVLEME MANTIĞI (DÜZELTİLDİ) ---
   const handleResetSchedule = () => { 
-      if(window.confirm("Haftalık programı sıfırlamak üzeresiniz. Mevcut program arşive eklenecek ve liste temizlenecek. Onaylıyor musunuz?")) { 
+      if(window.confirm("Program arşive alınıp sıfırlansın mı?")) { 
           const newTotalSolved = (student.stats?.totalSolved || 0) + weeklySolvedQuestions; 
           const newMonthlySolved = (student.stats?.monthlySolved || 0) + weeklySolvedQuestions; 
-          
-          // Arşive kaydederken detaylı listeyi saklıyoruz
-          const archivedWeek = { 
-              id: Date.now(), 
-              date: new Date().toLocaleDateString('tr-TR'), 
-              assignments: assignments, // Tüm görev listesini sakla
-              solvedCount: weeklySolvedQuestions 
-          }; 
-          
-          onUpdateStudent({ 
-              ...student, 
-              assignments: [], 
-              pastWeeks: [archivedWeek, ...(student.pastWeeks || [])], 
-              stats: { ...student.stats, totalSolved: newTotalSolved, monthlySolved: newMonthlySolved } 
-          }); 
+          // Mevcut assignment listesini KOPYALAYARAK arşive atıyoruz
+          const archivedWeek = { id: Date.now(), date: new Date().toLocaleDateString('tr-TR'), assignments: [...assignments], solvedCount: weeklySolvedQuestions }; 
+          onUpdateStudent({ ...student, assignments: [], pastWeeks: [archivedWeek, ...(student.pastWeeks || [])], stats: { ...student.stats, totalSolved: newTotalSolved, monthlySolved: newMonthlySolved } }); 
       } 
   };
   
-  const getDailyStats = (dayId) => { 
-      const dayTasks = assignments.filter(a => a.day === dayId); 
-      return { 
-          topic: dayTasks.filter(t => t.type === 'konu').length, 
-          question: dayTasks.filter(t => t.type === 'soru' || t.count).reduce((acc, curr) => acc + (parseInt(curr.count) || 0), 0), 
-          repeat: dayTasks.filter(t => t.type === 'tekrar').length, 
-          exam: dayTasks.filter(t => t.type === 'deneme').length 
-      }; 
-  };
-  
+  const getDailyStats = (dayId) => { const dayTasks = assignments.filter(a => a.day === dayId); return { topic: dayTasks.filter(t => t.type === 'konu').length, question: dayTasks.filter(t => t.type === 'soru' || t.count).reduce((acc, curr) => acc + (parseInt(curr.count) || 0), 0), repeat: dayTasks.filter(t => t.type === 'tekrar').length, exam: dayTasks.filter(t => t.type === 'deneme').length }; };
   const isAdmin = user.role === 'admin' || user.role === 'superadmin';
-  const isStudent = user.role === 'student';
-
-  // Gün seçimi butonu bileşeni
-  const DaySelector = ({ selectedDays, onChange }) => (
-      <div className="flex flex-wrap gap-1">
-          {DAYS.map(d => (
-              <button
-                  key={d.id}
-                  onClick={() => {
-                      const newDays = selectedDays.includes(d.id) 
-                          ? selectedDays.filter(id => id !== d.id) 
-                          : [...selectedDays, d.id];
-                      onChange(newDays);
-                  }}
-                  className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all ${selectedDays.includes(d.id) ? 'bg-orange-600 text-white border-orange-600' : `${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} ${colors.textSec} border-transparent hover:border-slate-500`}`}
-              >
-                  {d.label.substring(0,3)}
-              </button>
-          ))}
-      </div>
-  );
+  const DaySelector = ({ selectedDays, onChange }) => ( <div className="flex flex-wrap gap-1"> {DAYS.map(d => ( <button key={d.id} onClick={() => { const newDays = selectedDays.includes(d.id) ? selectedDays.filter(id => id !== d.id) : [...selectedDays, d.id]; onChange(newDays); }} className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all ${selectedDays.includes(d.id) ? 'bg-orange-600 text-white border-orange-600' : `${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} ${colors.textSec} border-transparent hover:border-slate-500`}`} > {d.label.substring(0,3)} </button> ))} </div> );
 
   return (
     <div className="space-y-8 animate-fade-in">
-      <div className="flex justify-between items-center">
-          <h2 className={`text-2xl font-bold ${colors.text}`}>Haftalık Planlama</h2>
-          <div className="flex gap-2">
-              {isAdmin && <Button variant="ghost" onClick={() => setIsEditMode(!isEditMode)} icon={Settings} className={isEditMode ? 'text-orange-500 bg-orange-500/10' : ''} />}
-              {isAdmin && <Button size="small" icon={Zap} onClick={() => setShowQuickModal(true)}>Hızlı Görev</Button>}
-              {isAdmin && <Button variant="danger" size="small" icon={RefreshCw} onClick={handleResetSchedule}>Arşivle & Sıfırla</Button>}
-          </div>
-      </div>
-      
+      <div className="flex justify-between items-center"><h2 className={`text-2xl font-bold ${colors.text}`}>Haftalık Planlama</h2><div className="flex gap-2">{isAdmin && <Button variant="ghost" onClick={() => setIsEditMode(!isEditMode)} icon={Settings} className={isEditMode ? 'text-orange-500 bg-orange-500/10' : ''} />}{isAdmin && <Button size="small" icon={Zap} onClick={() => setShowQuickModal(true)}>Hızlı Görev</Button>}{isAdmin && <Button variant="danger" size="small" icon={RefreshCw} onClick={handleResetSchedule}>Arşivle & Sıfırla</Button>}</div></div>
       {isAdmin && (
         <Card title={editingId ? "Ödevi Düzenle" : "Detaylı Ödev Atama"} className={`${colors.isDark ? 'bg-slate-800/50' : 'bg-white'}`}>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-                <div>
-                    <label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Ders</label>
-                    <select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.courseId} onChange={e => setForm({...form, courseId: e.target.value, unitId: '', topic: '', source: ''})}><option value="">Seçiniz</option>{activeCurriculum.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
-                </div>
-                <div>
-                    <label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Ünite</label>
-                    <select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.unitId} onChange={e => setForm({...form, unitId: e.target.value, topic: ''})} disabled={!selectedCourse}><option value="">Seçiniz</option>{selectedCourse?.units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select>
-                </div>
-                <div>
-                    <label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Konu</label>
-                    <select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.topic} onChange={e => setForm({...form, topic: e.target.value})} disabled={!selectedUnit}><option value="">Seçiniz</option>{selectedUnit?.topics.map(t => <option key={t} value={t}>{t}</option>)}</select>
-                </div>
-                <div>
-                    <label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Günler (Çoklu)</label>
-                    <DaySelector selectedDays={form.days} onChange={days => setForm({...form, days})} />
-                </div>
+                <div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Ders</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.courseId} onChange={e => setForm({...form, courseId: e.target.value, unitId: '', topic: '', source: ''})}><option value="">Seçiniz</option>{activeCurriculum.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+                <div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Ünite</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.unitId} onChange={e => setForm({...form, unitId: e.target.value, topic: ''})} disabled={!selectedCourse}><option value="">Seçiniz</option>{selectedCourse?.units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
+                <div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Konu</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.topic} onChange={e => setForm({...form, topic: e.target.value})} disabled={!selectedUnit}><option value="">Seçiniz</option>{selectedUnit?.topics.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                <div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Günler</label><DaySelector selectedDays={form.days} onChange={days => setForm({...form, days})} /></div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end mb-4">
-                <div>
-                    <label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Tip</label>
-                    <select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.type} onChange={e => setForm({...form, type: e.target.value})}>{TASK_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}</select>
-                </div>
-                <div>
-                    <label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Soru Sayısı</label>
-                    <input type="number" className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm disabled:opacity-50`} placeholder="Örn: 50" disabled={form.type !== 'soru'} value={form.count} onChange={e => setForm({...form, count: e.target.value})} />
-                </div>
-                <div>
-                    <label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Kaynak</label>
-                    <select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.source} onChange={e => setForm({...form, source: e.target.value})}><option value="">Kaynak Seçiniz / Diğer</option>{availableResources.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}</select>
-                </div>
+                <div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Tip</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.type} onChange={e => setForm({...form, type: e.target.value})}>{TASK_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}</select></div>
+                <div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Soru</label><input type="number" className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.count} onChange={e => setForm({...form, count: e.target.value})} /></div>
+                <div><label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Kaynak</label><select className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-2 ${colors.text} text-sm`} value={form.source} onChange={e => setForm({...form, source: e.target.value})}><option value="">Seçiniz</option>{availableResources.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}</select></div>
+                {!editingId && (<div className="flex items-center gap-2 pb-2"><input type="checkbox" checked={assignToClass} onChange={e => setAssignToClass(e.target.checked)} className="w-4 h-4 accent-orange-500" /><span className={`text-sm ${colors.text}`}>Tüm Sınıfa Ata</span>{assignToClass && <select className={`text-xs ${colors.inputBg} border ${colors.inputBorder} rounded p-1`} value={selectedClassId} onChange={e => setSelectedClassId(e.target.value)}>{classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>}</div>)}
             </div>
-            <div className="mb-4">
-                 <Input label="Not / Sayfa Aralığı (İsteğe Bağlı)" placeholder="Örn: Sayfa 70-80 arası çözülecek" value={form.note} onChange={e => setForm({...form, note: e.target.value})} />
-            </div>
+            <div className="mb-4"><Input label="Not" value={form.note} onChange={e => setForm({...form, note: e.target.value})} /></div>
             <div className="flex gap-2"><Button onClick={handleAssign} icon={editingId ? Save : Plus} className="flex-1">{editingId ? 'Güncelle' : 'Ekle'}</Button>{editingId && <Button onClick={handleCancelEdit} variant="secondary">İptal</Button>}</div>
         </Card>
       )}
-
-      <div className="flex overflow-x-auto gap-4 pb-4 md:grid md:grid-cols-7 md:overflow-visible">
-          {DAYS.map(day => { 
-            const dayTasks = assignments.filter(a => a.day === day.id); 
-            const stats = getDailyStats(day.id); 
-            return (
-            <div key={day.id} className={`min-w-[280px] md:min-w-0 ${colors.bgCardTransparent} border ${colors.border} rounded-xl flex flex-col h-full snap-center`}>
-                <div className={`p-3 border-b ${colors.border} ${colors.bgCard} rounded-t-xl text-center`}><span className={`font-bold ${colors.text} text-sm`}>{day.label}</span><span className={`block text-xs ${colors.textSec}`}>{dayTasks.length} Görev</span></div>
-                <div className="p-2 space-y-2 flex-1">
-                    {dayTasks.map(task => (<div key={task.id} className={`p-3 rounded-lg border text-xs group relative ${colors.shadow} ${task.status === 'completed' ? 'bg-emerald-900/20 border-emerald-900/50 opacity-75' : `${colors.bgCard} ${colors.border}`}`}><div className="flex justify-between items-start"><span className="font-bold text-orange-400 truncate w-full pr-12">{task.subject}</span>
-                    
-                    {/* EDIT MODE CONTROL */}
-                    {(isAdmin && isEditMode) && (
-                        <div className={`flex gap-1 absolute right-2 top-2 z-10 ${colors.isDark ? 'bg-slate-800/80' : 'bg-white/80'} p-1 rounded backdrop-blur-sm shadow-sm border ${colors.border}`}>
-                            <button onClick={(e) => {e.stopPropagation(); handleEdit(task)}} className={`text-slate-400 hover:text-blue-400 p-2`}><Edit2 size={12}/></button>
-                            <button onClick={(e) => requestDelete(e, task.id)} className="text-slate-400 hover:text-red-500 p-2"><Trash2 size={12}/></button>
-                        </div>
-                    )}
-
-                    </div><div className={`${colors.text} mt-1 text-sm font-medium line-clamp-2`}>{task.topic}</div><div className="mt-2 flex flex-col gap-1"><div className={`flex justify-between items-center text-xs ${colors.textSec}`}><span className={`${colors.isDark ? 'bg-slate-700/50' : 'bg-slate-200'} px-1.5 py-0.5 rounded`}>{TASK_TYPES.find(t=>t.id === task.type)?.label}</span>{task.count && <span className="font-bold text-orange-400">{task.count} Soru</span>}</div>{task.source && (<div className="flex items-center gap-1 text-xs text-blue-400 mt-0.5"><Book size={10} /><span className="truncate">{task.source}</span></div>)}</div>
-                    
-                    {task.note && (
-                        <div className={`mt-2 pt-2 border-t ${colors.border} text-[10px] ${colors.textSec} italic`}>
-                            Not: <span className={colors.text}>{task.note}</span>
-                        </div>
-                    )}
-
-                    <button onClick={() => toggleTaskStatus(task.id)} className={`mt-2 w-full py-2 rounded flex items-center justify-center gap-1 ${task.status === 'completed' ? 'bg-emerald-600 text-white' : `${colors.isDark ? 'bg-slate-700 text-slate-400 hover:bg-slate-600' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'}`}`}>{task.status === 'completed' ? <Check size={14}/> : 'Tamamla'}</button></div>))}
-                    {dayTasks.length === 0 && <div className={`text-center py-8 ${colors.textSec} text-xs`}>Boş Gün</div>}
-                </div>
-                <div className={`p-3 ${colors.isDark ? 'bg-slate-900/80' : 'bg-white/80'} border-t ${colors.border} rounded-b-xl text-[10px] space-y-1`}><div className={`flex justify-between ${colors.textSec}`}><span>Konu:</span> <span className={`${colors.text} font-bold`}>{stats.topic}</span></div><div className={`flex justify-between ${colors.textSec}`}><span>Soru:</span> <span className="text-orange-400 font-bold">{stats.question}</span></div><div className={`flex justify-between ${colors.textSec}`}><span>Tekrar:</span> <span className={`${colors.text} font-bold`}>{stats.repeat}</span></div><div className={`flex justify-between ${colors.textSec}`}><span>Deneme:</span> <span className={`${colors.text} font-bold`}>{stats.exam}</span></div></div>
-            </div>) 
-        })}
-      </div>
-
-       <DeleteConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={confirmDelete} />
-       
-       {showQuickModal && (
-        <Modal title="Hızlı Görev Ata" onClose={() => setShowQuickModal(false)}>
-            <div className="space-y-4">
-                <div>
-                    <label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Görev İçeriği</label>
-                    <input type="text" className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-3 ${colors.text} text-sm`} placeholder="Örn: X Videosunu İzle, Y Materyalini Hazırla" value={quickForm.text} onChange={e => setQuickForm({...quickForm, text: e.target.value})} />
-                </div>
-                
-                {/* YENİ EKLENEN ALANLAR: SORU SAYISI VE KAYNAK */}
-                <div className="grid grid-cols-2 gap-4">
-                    <div>
-                        <label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Soru Sayısı</label>
-                        <input type="number" className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-3 ${colors.text} text-sm`} placeholder="Opsiyonel" value={quickForm.count} onChange={e => setQuickForm({...quickForm, count: e.target.value})} />
-                    </div>
-                    <div>
-                        <label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Kaynak</label>
-                        <input type="text" className={`w-full ${colors.inputBg} ${colors.inputBorder} border rounded p-3 ${colors.text} text-sm`} placeholder="Opsiyonel" value={quickForm.source} onChange={e => setQuickForm({...quickForm, source: e.target.value})} />
-                    </div>
-                </div>
-
-                <div>
-                    <label className={`text-xs ${colors.textSec} uppercase font-bold block mb-1`}>Günler (Çoklu)</label>
-                    <DaySelector selectedDays={quickForm.days} onChange={days => setQuickForm({...quickForm, days})} />
-                </div>
-                <div className="text-xs text-orange-500 bg-orange-500/10 p-2 rounded">
-                  
-                </div>
-                <Button className="w-full mt-2" onClick={handleQuickAssign}>Atama Yap</Button>
-            </div>
-        </Modal>
-       )}
-
-       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mt-8"><Card className={`border-l-4 border-l-blue-500 ${colors.bgCard}`}><div className="flex items-center gap-3 mb-2"><div className="p-2 bg-blue-500/20 rounded-lg text-blue-500"><Zap size={20}/></div><span className={`text-xs uppercase font-bold ${colors.textSec}`}>Haftalık Performans</span></div><div className="flex justify-between items-end"><div><div className={`text-2xl font-bold ${colors.text}`}>{weeklySolvedQuestions} <span className={`text-sm font-normal ${colors.textSec}`}>Soru</span></div></div><div className="text-right"><div className="text-xl font-bold text-blue-400">%{completionRate}</div><div className={`text-[10px] ${colors.textSec}`}>Tamamlanma</div></div></div></Card><Card className={`border-l-4 border-l-purple-500 ${colors.bgCard}`}><div className="flex items-center gap-3 mb-2"><div className="p-2 bg-purple-500/20 rounded-lg text-purple-500"><Calendar size={20}/></div><span className={`text-xs uppercase font-bold ${colors.textSec}`}>Aylık Toplam</span></div><div className={`text-3xl font-bold ${colors.text} mt-2`}>{(monthlySolved || 0).toLocaleString()}</div></Card><Card className={`border-l-4 border-l-emerald-500 ${colors.bgCard}`}><div className="flex items-center gap-3 mb-2"><div className="p-2 bg-emerald-500/20 rounded-lg text-emerald-500"><Award size={20}/></div><span className={`text-xs uppercase font-bold ${colors.textSec}`}>Tüm Zamanlar</span></div><div className={`text-3xl font-bold ${colors.text} mt-2`}>{(allTimeSolved || 0).toLocaleString()}</div></Card><Card className={`border-l-4 border-l-orange-500 ${colors.bgCard}`}><div className="flex items-center gap-3 mb-2"><div className="p-2 bg-orange-500/20 rounded-lg text-orange-500"><List size={20}/></div><span className={`text-xs uppercase font-bold ${colors.textSec}`}>Görev Durumu</span></div><div className="grid grid-cols-2 gap-2 mt-2"><div className={`${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} p-2 rounded text-center`}><div className={`text-lg font-bold ${colors.text}`}>{weeklyCompletedCount}</div><div className={`text-[10px] ${colors.textSec}`}>Biten</div></div><div className={`${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} p-2 rounded text-center`}><div className={`text-lg font-bold ${colors.textSec}`}>{weeklyTaskCount - weeklyCompletedCount}</div><div className={`text-[10px] ${colors.textSec}`}>Kalan</div></div></div></Card></div>
       
-       {student.pastWeeks?.length > 0 && (
+      <div className="flex overflow-x-auto gap-4 pb-4 xl:grid xl:grid-cols-7 xl:overflow-visible snap-x">
+          {DAYS.map(day => { const dayTasks = assignments.filter(a => a.day === day.id); const stats = getDailyStats(day.id); return (<div key={day.id} className={`min-w-[280px] md:min-w-[300px] xl:min-w-0 ${colors.bgCardTransparent} border ${colors.border} rounded-xl flex flex-col h-full snap-center`}><div className={`p-3 border-b ${colors.border} ${colors.bgCard} rounded-t-xl text-center`}><span className={`font-bold ${colors.text} text-sm`}>{day.label}</span><span className={`block text-xs ${colors.textSec}`}>{dayTasks.length} Görev</span></div><div className="p-2 space-y-2 flex-1">{dayTasks.map(task => (<div key={task.id} className={`p-3 rounded-lg border text-xs group relative ${colors.shadow} ${task.status === 'completed' ? 'bg-emerald-900/20 border-emerald-900/50 opacity-75' : `${colors.bgCard} ${colors.border}`}`}><div className="flex justify-between items-start"><span className="font-bold text-orange-400 truncate w-full pr-12">{task.subject}</span>{(isAdmin && isEditMode) && (<div className={`flex gap-1 absolute right-2 top-2 z-10 ${colors.isDark ? 'bg-slate-800/80' : 'bg-white/80'} p-1 rounded backdrop-blur-sm shadow-sm border ${colors.border}`}><button onClick={(e) => {e.stopPropagation(); handleEdit(task)}} className={`text-slate-400 hover:text-blue-400 p-2`}><Edit2 size={12}/></button><button onClick={(e) => requestDelete(e, task.id)} className="text-slate-400 hover:text-red-500 p-2"><Trash2 size={12}/></button></div>)}</div><div className={`${colors.text} mt-1 text-sm font-medium line-clamp-2`}>{task.topic}</div><div className="mt-2 flex flex-col gap-1"><div className={`flex justify-between items-center text-xs ${colors.textSec}`}><span className={`${colors.isDark ? 'bg-slate-700/50' : 'bg-slate-200'} px-1.5 py-0.5 rounded`}>{TASK_TYPES.find(t=>t.id === task.type)?.label}</span>{task.count && <span className="font-bold text-orange-400">{task.count} Soru</span>}</div>{task.source && (<div className="flex items-center gap-1 text-xs text-blue-400 mt-0.5"><Book size={10} /><span className="truncate">{task.source}</span></div>)}</div>{task.note && (<div className={`mt-2 pt-2 border-t ${colors.border} text-[10px] ${colors.textSec} italic`}>Not: <span className={colors.text}>{task.note}</span></div>)}<button onClick={() => toggleTaskStatus(task.id)} className={`mt-2 w-full py-2 rounded flex items-center justify-center gap-1 ${task.status === 'completed' ? 'bg-emerald-600 text-white' : `${colors.isDark ? 'bg-slate-700 text-slate-400 hover:bg-slate-600' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'}`}`}>{task.status === 'completed' ? <Check size={14}/> : 'Tamamla'}</button></div>))}{dayTasks.length === 0 && <div className={`text-center py-8 ${colors.textSec} text-xs`}>Boş Gün</div>}</div><div className={`p-3 ${colors.isDark ? 'bg-slate-900/80' : 'bg-white/80'} border-t ${colors.border} rounded-b-xl text-[10px] space-y-1`}><div className={`flex justify-between ${colors.textSec}`}><span>Konu:</span> <span className={`${colors.text} font-bold`}>{stats.topic}</span></div><div className={`flex justify-between ${colors.textSec}`}><span>Soru:</span> <span className="text-orange-400 font-bold">{stats.question}</span></div><div className={`flex justify-between ${colors.textSec}`}><span>Tekrar:</span> <span className={`${colors.text} font-bold`}>{stats.repeat}</span></div><div className={`flex justify-between ${colors.textSec}`}><span>Deneme:</span> <span className={`${colors.text} font-bold`}>{stats.exam}</span></div></div></div>)})}
+      </div>
+      {showQuickModal && (<Modal title="Hızlı Görev" onClose={() => setShowQuickModal(false)}><div className="space-y-4"><Input label="Görev" value={quickForm.text} onChange={e => setQuickForm({...quickForm, text: e.target.value})} /><div className="grid grid-cols-2 gap-4"><Input label="Soru" type="number" value={quickForm.count} onChange={e => setQuickForm({...quickForm, count: e.target.value})} /><Input label="Kaynak" value={quickForm.source} onChange={e => setQuickForm({...quickForm, source: e.target.value})} /></div><div><label className="text-xs font-bold text-slate-500 mb-1 block">Günler</label><DaySelector selectedDays={quickForm.days} onChange={days => setQuickForm({...quickForm, days})} /></div><div className="flex items-center gap-2 pt-2"><input type="checkbox" checked={assignToClass} onChange={e => setAssignToClass(e.target.checked)} className="w-4 h-4 accent-orange-500" /><span className={`text-sm ${colors.text}`}>Tüm Sınıfa Ata</span>{assignToClass && <select className={`text-xs ${colors.inputBg} border ${colors.inputBorder} rounded p-1`} value={selectedClassId} onChange={e => setSelectedClassId(e.target.value)}>{classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>}</div><Button className="w-full mt-2" onClick={handleQuickAssign}>Ata</Button></div></Modal>)}
+      
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mt-8"><Card className={`border-l-4 border-l-blue-500 ${colors.bgCard}`}><div className="flex items-center gap-3 mb-2"><div className="p-2 bg-blue-500/20 rounded-lg text-blue-500"><Zap size={20}/></div><span className={`text-xs uppercase font-bold ${colors.textSec}`}>Haftalık Performans</span></div><div className="flex justify-between items-end"><div><div className={`text-2xl font-bold ${colors.text}`}>{weeklySolvedQuestions} <span className={`text-sm font-normal ${colors.textSec}`}>Soru</span></div></div><div className="text-right"><div className="text-xl font-bold text-blue-400">%{completionRate}</div><div className={`text-[10px] ${colors.textSec}`}>Tamamlanma</div></div></div></Card></div>
+      
+      {/* ARŞİV İÇİN YATAY GRID DÜZENİ (ATTIĞINIZ GÖRSELDEKİ GİBİ) */}
+      {student.pastWeeks?.length > 0 && (
         <Card title="Geçmiş Haftalar Arşivi" className="mt-8">
             <div className="space-y-4">
                 {student.pastWeeks.map(week => (
@@ -1061,61 +769,26 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user }) => {
                         <div className="p-4 flex justify-between items-center cursor-pointer" onClick={() => setExpandedArchive(expandedArchive === week.id ? null : week.id)}>
                             <div className="flex items-center gap-3">
                                 {expandedArchive === week.id ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
-                                <div>
-                                    <div className={`font-bold ${colors.text} text-sm`}>Hafta: {week.date}</div>
-                                    <div className={`text-xs ${colors.textSec}`}>{week.assignments?.length || 0} Görev Planlandı</div>
-                                </div>
+                                <div><div className={`font-bold ${colors.text} text-sm`}>Hafta: {week.date}</div><div className={`text-xs ${colors.textSec}`}>{week.assignments?.length || 0} Görev Planlandı</div></div>
                             </div>
-                            <div className="text-right flex items-center gap-4">
-                                <div className="text-orange-400 font-bold">{week.solvedCount} Soru Çözüldü</div>
-                                {isAdmin && (
-                                    <button onClick={(e) => { e.stopPropagation(); handleDeleteArchive(week.id); }} className="text-red-500 hover:bg-red-500/10 p-2 rounded transition-colors">
-                                        <Trash2 size={16}/>
-                                    </button>
-                                )}
-                            </div>
+                            <div className="text-right flex items-center gap-4"><div className="text-orange-400 font-bold">{week.solvedCount} Soru Çözüldü</div>{isAdmin && (<button onClick={(e) => { e.stopPropagation(); handleDeleteArchive(week.id); }} className="text-red-500 hover:bg-red-500/10 p-2 rounded transition-colors"><Trash2 size={16}/></button>)}</div>
                         </div>
-                        
-                        {/* Arşiv Detay Görünümü */}
                         {expandedArchive === week.id && week.assignments && (
                            <div className={`p-4 border-t ${colors.border} ${colors.isDark ? 'bg-slate-900/50' : 'bg-white/50'}`}>
-    {/* YENİ GRİD (IZGARA) GÖRÜNÜMÜ */}
-    <div className="flex overflow-x-auto gap-4 pb-4 md:grid md:grid-cols-7 md:overflow-visible">
-        {DAYS.map(day => {
-            // Arşivdeki o güne ait görevleri filtrele
-            const dayTasks = week.assignments.filter(a => a.day === day.id);
-            return (
-                <div key={day.id} className={`min-w-[150px] md:min-w-0 ${colors.bgCardTransparent} border ${colors.border} rounded-xl flex flex-col h-full opacity-90`}>
-                    {/* Gün Başlığı */}
-                    <div className={`p-2 border-b ${colors.border} ${colors.bgCard} rounded-t-xl text-center`}>
-                        <span className={`font-bold ${colors.text} text-xs`}>{day.label}</span>
-                    </div>
-                    {/* Görev Listesi */}
-                    <div className="p-2 space-y-2 flex-1 min-h-[80px]">
-                        {dayTasks.map(task => (
-                            <div key={task.id} className={`p-2 rounded-lg border text-[10px] ${colors.shadow} ${task.status === 'completed' ? 'bg-emerald-900/10 border-emerald-500/30' : `${colors.bgCard} ${colors.border}`}`}>
-                                <div className="font-bold text-orange-400 truncate">{task.subject}</div>
-                                <div className={`${colors.text} line-clamp-2 mb-1`}>{task.topic}</div>
-                                <div className={`flex justify-between items-center ${colors.textSec}`}>
-                                    <span>{TASK_TYPES.find(t=>t.id === task.type)?.label}</span>
-                                    {task.status === 'completed' ? <Check size={12} className="text-emerald-500"/> : <span className="text-red-400 text-[9px] font-bold">X</span>}
-                                </div>
-                                {task.count && task.type === 'soru' && <div className="text-orange-500 font-bold mt-1">{task.count} Soru</div>}
-                            </div>
-                        ))}
-                        {dayTasks.length === 0 && <div className={`text-center py-4 ${colors.textSec} text-[10px]`}>-</div>}
-                    </div>
-                </div>
-            )
-        })}
-    </div>
-</div>
+                              <div className="flex overflow-x-auto gap-4 pb-4 xl:grid xl:grid-cols-7 xl:overflow-visible">
+                                  {DAYS.map(day => {
+                                      const dayTasks = week.assignments.filter(a => a.day === day.id);
+                                      return (<div key={day.id} className={`min-w-[150px] md:min-w-0 ${colors.bgCardTransparent} border ${colors.border} rounded-xl flex flex-col h-full opacity-90`}><div className={`p-2 border-b ${colors.border} ${colors.bgCard} rounded-t-xl text-center`}><span className={`font-bold ${colors.text} text-xs`}>{day.label}</span></div><div className="p-2 space-y-2 flex-1 min-h-[80px]">{dayTasks.map(task => (<div key={task.id} className={`p-2 rounded-lg border text-[10px] ${colors.shadow} ${task.status === 'completed' ? 'bg-emerald-900/10 border-emerald-500/30' : `${colors.bgCard} ${colors.border}`}`}><div className="font-bold text-orange-400 truncate">{task.subject}</div><div className={`${colors.text} line-clamp-2 mb-1`}>{task.topic}</div><div className={`flex justify-between items-center ${colors.textSec}`}><span>{TASK_TYPES.find(t=>t.id === task.type)?.label}</span>{task.status === 'completed' ? <Check size={12} className="text-emerald-500"/> : <span className="text-red-400 text-[9px] font-bold">X</span>}</div>{task.count && task.type === 'soru' && <div className="text-orange-500 font-bold mt-1">{task.count} Soru</div>}</div>))}{dayTasks.length === 0 && <div className={`text-center py-4 ${colors.textSec} text-[10px]`}>-</div>}</div></div>)
+                                  })}
+                              </div>
+                          </div>
                         )}
                     </div>
                 ))}
             </div>
         </Card>
       )}
+      <DeleteConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={confirmDelete} />
     </div>
   );
 };
@@ -1226,348 +899,173 @@ const ResourceModule = ({ student, curriculum, onUpdateStudent, user }) => {
   );
 };
 
-// 5. GELİŞMİŞ DENEME TAKİBİ
-const ExamModule = ({ student, onUpdateStudent, user }) => {
+// 5. GELİŞMİŞ DENEME TAKİBİ (DÜZELTİLDİ: Alt Grafikler Detaylandırıldı, Yan Menü Kaldırıldı)
+const ExamModule = ({ student, onUpdateStudent, user, curriculum }) => { 
   const [view, setView] = useState('list');
-  const [filterType, setFilterType] = useState('ALL'); 
+  const [filterType, setFilterType] = useState('TYT'); 
   const [branchFilter, setBranchFilter] = useState('mat');
   const [examType, setExamType] = useState('TYT');
-  // Düzenleme durumu için ID takibi
   const [editingId, setEditingId] = useState(null);
-  const [showRankModal, setShowRankModal] = useState(null); // Sıralama modalı için
+  
+  // Konu ve Modal State'leri
+  const [showTopicModal, setShowTopicModal] = useState(false);
+  const [topicSelection, setTopicSelection] = useState({ course: '', unit: '', topic: '', count: '' });
+  const [showRankModal, setShowRankModal] = useState(null);
+  const [showWrongTopicsModal, setShowWrongTopicsModal] = useState(null);
 
-  const [formData, setFormData] = useState({ name: "", date: new Date().toISOString().split('T')[0], difficulty: "Orta", stats: { turkey: { rank: '', total: '' }, city: { rank: '', total: '' }, school: { rank: '', total: '' } }, details: {}, branchSubject: 'mat', duration: '' });
+  const [formData, setFormData] = useState({ name: "", date: new Date().toISOString().split('T')[0], difficulty: "Orta", stats: { turkey: { rank: '', total: '' }, city: { rank: '', total: '' }, school: { rank: '', total: '' } }, details: {}, branchSubject: 'mat', duration: '', wrongTopics: [] });
   const [deleteConfirm, setDeleteConfirm] = useState(null);
-  const [analysisTab, setAnalysisTab] = useState('TYT');
   const colors = useThemeColors();
   const isAdmin = user.role === 'admin' || user.role === 'superadmin';
-  const isStudent = user.role === 'student';
+  const activeCurriculum = student.curriculum || curriculum || [];
 
-  useEffect(() => { 
-      // Eğer düzenleme modunda değilsek formu temizle/hazırla
-      if(!editingId) {
-        if (view === 'add' && examType !== 'BRANS') { 
-            const initialDetails = {}; 
-            EXAM_TYPES[examType].groups.forEach(group => { group.sections.forEach(sec => { initialDetails[sec.key] = { d: '', y: '' }; }); }); 
-            setFormData(prev => ({ ...prev, details: initialDetails })); 
-        } else if (view === 'add' && examType === 'BRANS') { 
-            setFormData(prev => ({ ...prev, details: { [prev.branchSubject]: { d: '', y: '' } } })); 
-        } 
-      }
-  }, [examType, view, formData.branchSubject, editingId]);
-
-  const getNetFormula = (d, y) => { 
-      const dVal = parseFloat(d) || 0; 
-      const yVal = parseFloat(y) || 0;
-      const divisor = examType === 'LGS' ? 3 : 4; 
-      return Math.max(0, dVal - yVal / divisor);
-  }
-
-  const handleEdit = (exam) => {
-      // Düzenleme modunu aç
-      setEditingId(exam.id);
-      setExamType(exam.type === 'BRANS' ? 'BRANS' : exam.type);
-      if(exam.type === 'BRANS') setBranchFilter(exam.subject);
-      
-      setFormData({
-          name: exam.name,
-          date: exam.date,
-          difficulty: exam.difficulty || "Orta",
-          stats: exam.stats || { turkey: { rank: '', total: '' }, city: { rank: '', total: '' }, school: { rank: '', total: '' } },
-          details: exam.details || {},
-          branchSubject: exam.subject || 'mat',
-          duration: exam.duration || ''
-      });
-      setView('add');
+  const handleAddWrongTopic = () => {
+      if(!topicSelection.topic) return alert("Konu seçiniz");
+      const newTopic = { id: Date.now(), name: topicSelection.topic, course: activeCurriculum.find(c => c.id === topicSelection.course)?.name || '', count: topicSelection.count || 1 };
+      setFormData({ ...formData, wrongTopics: [...formData.wrongTopics, newTopic] });
+      setTopicSelection({ ...topicSelection, topic: '', count: '' });
   };
+  const removeWrongTopic = (id) => setFormData({ ...formData, wrongTopics: formData.wrongTopics.filter(t => t.id !== id) });
 
   const handleSave = () => { 
-      if(!formData.name) return alert("Lütfen deneme adını giriniz."); 
-      let totalNet = 0;
-      const processedDetails = {}; 
-      Object.keys(formData.details).forEach(key => { 
-          const { d, y } = formData.details[key]; 
-          const net = getNetFormula(d, y); 
-          processedDetails[key] = { d, y, n: net }; 
-          totalNet += net; 
-      });
-
-      if (editingId) {
-          // GÜNCELLEME İŞLEMİ
-          const updatedExams = student.exams.map(e => e.id === editingId ? { 
-              ...e, 
-              type: examType, 
-              subject: examType === 'BRANS' ? formData.branchSubject : null, 
-              ...formData, 
-              totalNet, 
-              details: processedDetails 
-          } : e);
-          onUpdateStudent({ ...student, exams: updatedExams });
-          setEditingId(null);
-      } else {
-          // YENİ EKLEME İŞLEMİ
-          const newExam = { 
-              id: Date.now(), 
-              type: examType, 
-              subject: examType === 'BRANS' ? formData.branchSubject : null, 
-              ...formData, 
-              totalNet, 
-              details: processedDetails 
-          }; 
-          onUpdateStudent({ ...student, exams: [newExam, ...student.exams] }); 
-      }
+      if(!formData.name) return alert("Deneme adı giriniz."); 
+      let totalNet = 0; const processedDetails = {}; 
+      Object.keys(formData.details).forEach(key => { const { d, y } = formData.details[key]; const net = Math.max(0, parseFloat(d||0) - parseFloat(y||0)/(examType==='LGS'?3:4)); processedDetails[key] = { d, y, n: net }; totalNet += net; });
+      const examData = { type: examType, subject: examType==='BRANS'?formData.branchSubject:null, ...formData, totalNet, details: processedDetails };
       
-      setView('list');
-      setFormData({ name: "", date: new Date().toISOString().split('T')[0], difficulty: "Orta", stats: { turkey: { rank: '', total: '' }, city: { rank: '', total: '' }, school: { rank: '', total: '' } }, details: {}, branchSubject: 'mat', duration: '' });
+      if (editingId) onUpdateStudent({ ...student, exams: student.exams.map(e => e.id === editingId ? { ...e, ...examData } : e) });
+      else onUpdateStudent({ ...student, exams: [{ id: Date.now(), ...examData }, ...student.exams] });
+      setView('list'); setEditingId(null);
   };
 
-  const requestDelete = (e, id) => { e.stopPropagation(); e.preventDefault(); setDeleteConfirm(id); };
-  const confirmDelete = () => { if (deleteConfirm) { const filtered = student.exams.filter(e => e.id !== deleteConfirm); onUpdateStudent({ ...student, exams: filtered }); setDeleteConfirm(null); } };
-  
+  const handleEdit = (exam) => { setEditingId(exam.id); setExamType(exam.type==='BRANS'?'BRANS':exam.type); if(exam.type==='BRANS') setBranchFilter(exam.subject); setFormData({ name: exam.name, date: exam.date, difficulty: exam.difficulty, stats: exam.stats, details: exam.details, branchSubject: exam.subject, duration: exam.duration, wrongTopics: exam.wrongTopics || [] }); setView('add'); };
   const updateDetail = (key, field, value) => setFormData(prev => ({ ...prev, details: { ...prev.details, [key]: { ...prev.details[key], [field]: value } } }));
   const updateStat = (scope, field, value) => setFormData(prev => ({ ...prev, stats: { ...prev.stats, [scope]: { ...prev.stats[scope], [field]: value } } }));
+  const confirmDelete = () => { if (deleteConfirm) { onUpdateStudent({ ...student, exams: student.exams.filter(e => e.id !== deleteConfirm) }); setDeleteConfirm(null); } };
 
-  let filteredExams = student.exams || []; 
-  if (filterType !== 'ALL') { 
-      filteredExams = filteredExams.filter(e => e.type === filterType);
-      if (filterType === 'BRANS') filteredExams = filteredExams.filter(e => e.subject === branchFilter);
-  } else { filteredExams = filteredExams.filter(e => e.type !== 'BRANS'); }
+  let visibleExams = student.exams;
+  if (filterType !== 'ALL') { visibleExams = visibleExams.filter(e => e.type === filterType); if(filterType === 'BRANS') visibleExams = visibleExams.filter(e => e.subject === branchFilter); }
+  visibleExams = visibleExams.sort((a,b)=> new Date(a.date) - new Date(b.date));
   
-  const analysisExams = student.exams.filter(e => e.type === analysisTab).reverse();
-  const getSubjectHistory = (subjectKey) => { return analysisExams.map(e => ({ date: e.date, net: e.details[subjectKey]?.n || 0 })); }
+  const last10Exams = visibleExams.slice(-10);
+  const chartData = last10Exams.map(e => ({...e, date: formatDate(e.date)}));
+  const getSubjectHistory = (subjectKey) => chartData.map(e => ({ date: e.date, net: e.details[subjectKey]?.n || 0 }));
 
-  // ... getBestScores fonksiyonu ...
-  const getBestScores = () => { 
-    if(filterType === 'ALL' || filterType === 'BRANS') return null;
-    const relevantExams = student.exams.filter(e => e.type === filterType); 
-    if(relevantExams.length === 0) return null; 
-    const subjectKeys = [];
-    EXAM_TYPES[filterType].groups.forEach(g => g.sections.forEach(s => subjectKeys.push(s))); 
+  const getAverageStats = () => { 
+    if(filterType === 'ALL' || filterType === 'BRANS' || last10Exams.length === 0) return null;
+    const subjectKeys = []; EXAM_TYPES[filterType].groups.forEach(g => g.sections.forEach(s => subjectKeys.push(s))); 
+    const avgTotal = last10Exams.reduce((a,b) => a + b.totalNet, 0) / last10Exams.length;
     return (
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6">
-        <div className={`${colors.bgCard} p-4 rounded-xl border ${colors.border} text-center ${colors.shadow}`}>
-          <div className={`text-[10px] ${colors.textSec} uppercase font-bold mb-1`}>Toplam Deneme</div>
-          <div className={`text-xl font-bold ${colors.text}`}>{relevantExams.length}</div>
-        </div>
-        <div className={`${colors.bgCard} p-4 rounded-xl border ${colors.border} text-center ${colors.shadow}`}>
-          <div className={`text-[10px] ${colors.textSec} uppercase font-bold mb-1`}>En Yüksek Net</div>
-          <div className="text-xl font-bold text-orange-500">{Math.max(...relevantExams.map(e => e.totalNet)).toFixed(2)}</div>
-        </div>
-        {subjectKeys.map(sub => (
-          <div key={sub.key} className={`${colors.bgCard} p-4 rounded-xl border ${colors.border} text-center ${colors.shadow}`}>
-            <div className={`text-[10px] ${colors.textSec} uppercase font-bold mb-1 max-w-full truncate`} title={`En İyi ${sub.label}`}>{sub.label}</div>
-            <div className="text-xl font-bold text-emerald-400">{Math.max(...relevantExams.map(e => e.details[sub.key]?.n || 0)).toFixed(1)}</div>
-          </div>
-        ))}
+        <div className={`${colors.bgCard} p-4 rounded-xl border ${colors.border} text-center ${colors.shadow}`}><div className={`text-[10px] ${colors.textSec} uppercase font-bold mb-1`}>Analiz Edilen</div><div className={`text-xl font-bold ${colors.text}`}>{last10Exams.length} <span className="text-xs font-normal text-slate-500">/ {visibleExams.length}</span></div></div>
+        <div className={`${colors.bgCard} p-4 rounded-xl border ${colors.border} text-center ${colors.shadow}`}><div className={`text-[10px] ${colors.textSec} uppercase font-bold mb-1`}>Son 10 Ort.</div><div className="text-xl font-bold text-orange-500">{avgTotal.toFixed(2)}</div></div>
+        {subjectKeys.map(sub => { const avgSub = last10Exams.reduce((a,b) => a + (b.details[sub.key]?.n || 0), 0) / last10Exams.length; return (<div key={sub.key} className={`${colors.bgCard} p-4 rounded-xl border ${colors.border} text-center ${colors.shadow}`}><div className={`text-[10px] ${colors.textSec} uppercase font-bold mb-1 truncate`}>{sub.label} Ort.</div><div className="text-xl font-bold text-emerald-400">{avgSub.toFixed(1)}</div></div>) })}
       </div>
     );
   }
 
   const getTableHeaders = () => { 
-      if(filterType === 'ALL') return ['Tarih', 'Sınav Adı', 'Tür', 'Net', 'İşlem'];
-      if(filterType === 'BRANS') return ['Tarih', 'Sınav Adı', 'Ders', 'Süre', 'Net', 'İşlem']; 
-      const subjects = []; 
-      EXAM_TYPES[filterType].groups.forEach(g => g.sections.forEach(s => subjects.push(s.label)));
-      return ['Tarih', 'Sınav Adı', ...subjects, 'Toplam', 'İşlem']; 
-  }
+      if(filterType === 'ALL') return ['Tarih', 'Sınav', 'Tür', 'Net', 'Yanlış', 'İşlem'];
+      if(filterType === 'BRANS') return ['Tarih', 'Sınav', 'Ders', 'Süre', 'Net', 'Yanlış', 'İşlem']; 
+      const subjects = []; EXAM_TYPES[filterType]?.groups.forEach(g => g.sections.forEach(s => subjects.push(s.label)));
+      return ['Tarih', 'Sınav', ...subjects, 'Toplam', 'Yanlış', 'İşlem']; 
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
       <div className={`flex flex-col lg:flex-row justify-between items-start lg:items-center ${colors.bgCardTransparent} p-4 rounded-xl border ${colors.border} gap-4`}>
-          <div className={`flex flex-wrap gap-2 ${colors.isDark ? 'bg-slate-800' : 'bg-slate-200'} p-1 rounded-lg`}>
-              {['ALL', 'TYT', 'AYT', 'LGS', 'BRANS'].map(type => (<button key={type} onClick={() => setFilterType(type)} className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${filterType === type ? 'bg-orange-600 text-white shadow' : `${colors.textSec} hover:${colors.text}`}`}>{type === 'ALL' ? 'Genel' : type === 'BRANS' ? 'Branş' : type}</button>))}
-          </div>
-          {filterType === 'BRANS' && (<select value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)} className={`${colors.inputBg} border ${colors.inputBorder} ${colors.text} text-sm rounded-lg p-2.5 outline-none focus:border-orange-500`}>{BRANCH_SUBJECTS.map(sub => <option key={sub.id} value={sub.id}>{sub.label}</option>)}</select>)}
-          <div className="flex gap-2 ml-auto">
-              <Button size="small" variant={view === 'list' ? 'primary' : 'ghost'} onClick={() => { setView('list'); setEditingId(null); }}>Liste</Button>
-              {isAdmin && <Button size="small" variant={view === 'add' ? 'primary' : 'ghost'} icon={Plus} onClick={() => { setView('add'); setEditingId(null); setFormData({ name: "", date: new Date().toISOString().split('T')[0], difficulty: "Orta", stats: { turkey: { rank: '', total: '' }, city: { rank: '', total: '' }, school: { rank: '', total: '' } }, details: {}, branchSubject: 'mat', duration: '' }); }}>Ekle</Button>}
-          </div>
+          <div className={`flex flex-wrap gap-2 ${colors.isDark ? 'bg-slate-800' : 'bg-slate-200'} p-1 rounded-lg`}>{['TYT', 'AYT', 'LGS', 'BRANS'].map(type => (<button key={type} onClick={() => setFilterType(type)} className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${filterType === type ? 'bg-orange-600 text-white shadow' : `${colors.textSec} hover:${colors.text}`}`}>{type}</button>))}</div>
+          {filterType === 'BRANS' && (<select value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)} className={`${colors.inputBg} border ${colors.inputBorder} ${colors.text} text-sm rounded-lg p-2.5 outline-none`}>{BRANCH_SUBJECTS.map(sub => <option key={sub.id} value={sub.id}>{sub.label}</option>)}</select>)}
+          <div className="flex gap-2 ml-auto"><Button size="small" variant={view === 'list' ? 'primary' : 'ghost'} onClick={() => { setView('list'); setEditingId(null); }}>Liste</Button>{isAdmin && <Button size="small" variant={view === 'add' ? 'primary' : 'ghost'} icon={Plus} onClick={() => { setView('add'); setEditingId(null); setFormData({ name: "", date: new Date().toISOString().split('T')[0], difficulty: "Orta", stats: { turkey: { rank: '', total: '' }, city: { rank: '', total: '' }, school: { rank: '', total: '' } }, details: {}, branchSubject: 'mat', duration: '', wrongTopics: [] }); }}>Ekle</Button>}</div>
       </div>
 
       {view === 'list' && (<>
-        <Card title="Genel Net İlerleme Analizi">
-            <div className="flex gap-2 mb-4">
-                {['TYT', 'AYT', 'LGS'].map(tab => (
-                    <button key={tab} onClick={() => setAnalysisTab(tab)} className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all ${analysisTab === tab ? 'bg-orange-500 text-white border-orange-500' : `${colors.bgCard} ${colors.border} ${colors.textSec}`}`}>{tab}</button>
-                ))}
-            </div>
-            <div className="h-64 mb-6">
-                <LineChart data={analysisExams} dataKey="totalNet" labelKey="date" />
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {EXAM_TYPES[analysisTab]?.groups.flatMap(g => g.sections).map(section => {
-                    const history = getSubjectHistory(section.key);
-                    return (
+        {getAverageStats()}
+        
+        {/* GRAFİKLER ALANI - ARTIK TAM GENİŞLİK VE YAN MENÜ YOK */}
+        <div className="space-y-6">
+            <Card title={`${filterType} Net Gelişimi (Son 10)`}>
+                <div className="h-72 w-full"><LineChart data={chartData} dataKey="totalNet" labelKey="date" subLabelKey="name" height={280} /></div>
+            </Card>
+            
+            {/* DERS BAZLI KÜÇÜK GRAFİKLER - ARTIK DETAYLI GÖRÜNÜYOR (showDots={false} kaldırıldı) */}
+            {filterType !== 'BRANS' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {EXAM_TYPES[filterType]?.groups.flatMap(g => g.sections).map(section => (
                         <div key={section.key} className={`${colors.bgCardTransparent} p-4 rounded-lg border ${colors.border}`}>
-                            <div className={`text-xs font-bold ${colors.textSec} mb-2`}>{section.label} Net Gelişimi</div>
-                            <div className="h-24">
-                                <LineChart data={history} dataKey="net" labelKey="date" height={100} showDots={true} strokeWidth={2} color="#3b82f6" maxValue={section.q} />
-                            </div>
+                            <div className={`text-xs font-bold ${colors.textSec} mb-2`}>{section.label}</div>
+                            {/* showDots attribute'u kaldırıldı, varsayılan olarak true olacak ve detaylar görünecek */}
+                            <div className="h-40"><LineChart data={getSubjectHistory(section.key)} dataKey="net" labelKey="date" height={160} color="#3b82f6" maxValue={section.q} /></div>
                         </div>
-                    )
-                })}
-            </div>
-        </Card>
-        {getBestScores()}
-        <Card title="Detaylı Sınav Arşivi">
-            <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm whitespace-nowrap">
-                    <thead className={`${colors.tableHeader} text-xs uppercase font-bold`}><tr>{getTableHeaders().map((h, i) => <th key={i} className="p-4 text-center">{h}</th>)}</tr></thead>
-                    <tbody className={`divide-y ${colors.divider} ${colors.isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                    {filteredExams
-                        .sort((a, b) => new Date(b.date) - new Date(a.date))
-                        .map(exam => (
-                        <tr key={exam.id} className={`${colors.hoverBg} group transition-colors`}>
-                            <td className={`p-4 ${colors.textSec} text-center`}>{formatDate(exam.date)}</td>
-                            <td className={`p-4 font-medium ${colors.text} text-center`}>{exam.name}</td>
-                            {(filterType === 'ALL' || filterType === 'BRANS') ? (<><td className="p-4 text-center"><span className={`px-2 py-1 rounded text-xs font-bold ${exam.type === 'BRANS' ? 'bg-emerald-500/10 text-emerald-400' : `${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} ${colors.textSec}`}`}>{exam.type === 'BRANS' ? BRANCH_SUBJECTS.find(s=>s.id === exam.subject)?.label : exam.type}</span></td>{filterType === 'BRANS' && <td className="p-4 text-center text-xs">{exam.duration ? exam.duration + ' dk' : '-'}</td>}</>) : (EXAM_TYPES[filterType].groups.flatMap(g => g.sections).map(sec => (<td key={sec.key} className="p-4 text-center">{exam.details[sec.key]?.n.toFixed(1) || '-'}</td>)))}
-                            <td className="p-4 text-center font-bold text-orange-500 text-lg">{exam.totalNet.toFixed(2)}</td>
-                            <td className="p-4 text-center flex items-center justify-center gap-1">
-                                {/* SIRALAMA GÖSTERME BUTONU */}
-                                {(exam.stats?.turkey?.rank || exam.stats?.city?.rank || exam.stats?.school?.rank) && (
-                                    <button onClick={() => setShowRankModal(exam)} className="p-2 hover:bg-blue-500/20 text-slate-500 hover:text-blue-500 rounded transition-colors group" title="Sıralamayı Gör">
-                                        <Activity size={16} />
-                                    </button>
-                                )}
-                                {/* DÜZENLEME BUTONU (YENİ) */}
-                                {!isStudent && (
-                                    <button onClick={() => handleEdit(exam)} className="p-2 hover:bg-orange-500/20 text-slate-500 hover:text-orange-500 rounded transition-colors group">
-                                        <Edit2 size={16} />
-                                    </button>
-                                )}
-                                {!isStudent && <button onClick={(e) => requestDelete(e, exam.id)} className="p-2 hover:bg-red-500/20 text-slate-500 hover:text-red-500 rounded transition-colors group"><Trash2 size={16} /></button>}
-                            </td>
-                        </tr>
                     ))}
-                    {filteredExams.length === 0 && <tr><td colSpan="100%" className={`p-8 text-center ${colors.textSec}`}>Kayıt yok.</td></tr>}
-                    </tbody>
-                </table>
-            </div>
+                </div>
+            )}
+        </div>
+        
+        <Card title="Sınav Sonuçları (Tümü)">
+            <div className="overflow-x-auto"><table className="w-full text-left text-sm whitespace-nowrap"><thead className={colors.tableHeader}><tr>{getTableHeaders().map((h,i)=><th key={i} className="p-3 font-bold text-xs uppercase">{h}</th>)}</tr></thead><tbody className={colors.divider}>
+                {visibleExams.slice().reverse().map(exam => ( 
+                    <tr key={exam.id} className={colors.hoverBg}>
+                        <td className={`p-3 ${colors.textSec}`}>{formatDate(exam.date)}</td>
+                        <td className={`p-3 font-bold ${colors.text}`}>{exam.name}</td>
+                        {(filterType === 'ALL' || filterType === 'BRANS') ? (<><td className="p-3"><span className={`text-[10px] px-2 py-1 rounded bg-slate-700 text-slate-300`}>{exam.type === 'BRANS' ? exam.subject : exam.type}</span></td>{filterType === 'BRANS' && <td className="p-3 font-bold text-blue-400">{exam.duration ? `${exam.duration} dk` : '-'}</td>}</>) : (EXAM_TYPES[filterType]?.groups.flatMap(g => g.sections).map(sec => (<td key={sec.key} className="p-3 text-center">{exam.details[sec.key]?.n?.toFixed(1) || '-'}</td>)))}
+                        <td className="p-3 font-bold text-orange-500 text-lg">{exam.totalNet.toFixed(2)}</td>
+                        <td className="p-3"><button onClick={()=>setShowWrongTopicsModal(exam)} className={`px-2 py-1 rounded text-xs border ${exam.wrongTopics?.length > 0 ? 'border-red-500 text-red-500 bg-red-500/10' : `${colors.border} ${colors.textSec}`}`}>{exam.wrongTopics?.length || 0} Konu</button></td>
+                        <td className="p-3 flex gap-2 items-center"><button onClick={()=>setShowRankModal(exam)} className="text-blue-500 hover:bg-blue-500/10 p-2 rounded"><Activity size={16}/></button><button onClick={()=>handleEdit(exam)} className="text-slate-500 hover:text-orange-500 p-2"><Edit2 size={16}/></button><button onClick={()=>setDeleteConfirm(exam.id)} className="text-slate-500 hover:text-red-500 p-2"><Trash2 size={16}/></button></td>
+                    </tr>
+                ))}
+            </tbody></table></div>
         </Card>
       </>)}
 
       {view === 'add' && (
-        <div className="max-w-5xl mx-auto animate-fade-in">
-            <Card title={editingId ? 'Deneme Düzenle' : (examType === 'BRANS' ? 'Yeni Branş Denemesi' : 'Yeni Genel Deneme')}>
-                <div className="mb-8">
-                    <label className={`block text-xs font-medium ${colors.textSec} mb-2 uppercase tracking-wider`}>Sınav Türü</label>
-                    <div className="flex flex-wrap gap-4">{[...Object.keys(EXAM_TYPES), 'BRANS'].map(type => (<button key={type} onClick={() => setExamType(type)} className={`flex-1 py-4 px-4 rounded-xl border-2 transition-all font-bold text-lg ${examType === type ? 'border-orange-500 bg-orange-500/10 text-orange-500' : `${colors.border} ${colors.inputBg} ${colors.textSec} hover:border-slate-500`}`}>{type === 'BRANS' ? 'Branş' : EXAM_TYPES[type].label}</button>))}</div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-                    {examType === 'BRANS' && (<div><label className={`block text-xs font-medium ${colors.textSec} mb-2 uppercase tracking-wider`}>Branş Seçimi</label><select className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg px-4 py-3 ${colors.text} text-sm focus:border-orange-500 outline-none`} value={formData.branchSubject} onChange={e => setFormData({...formData, branchSubject: e.target.value})}>{BRANCH_SUBJECTS.map(sub => <option key={sub.id} value={sub.id}>{sub.label}</option>)}</select></div>)}
-                    <Input label="Deneme Adı *" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="Örn: 3D Matematik Branş-1" />
-                    <Input label="Tarih *" type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} />
-                    {examType !== 'BRANS' && (<div><label className={`block text-xs font-medium ${colors.textSec} mb-2 uppercase tracking-wider`}>Zorluk</label><select className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg px-4 py-3 ${colors.text} text-sm focus:border-orange-500 outline-none`} value={formData.difficulty} onChange={e => setFormData({...formData, difficulty: e.target.value})}><option>Kolay</option><option>Orta</option><option>Zor</option><option>Çok Zor</option></select></div>)}
-                    {examType === 'BRANS' && <Input label="Süre (dk) - İsteğe Bağlı" type="number" value={formData.duration} onChange={e => setFormData({...formData, duration: e.target.value})} placeholder="Örn: 45" />}
-                </div>
-                <div className="space-y-6 mb-8">
-                    <h4 className={`text-orange-500 font-bold mb-4 border-b ${colors.border} pb-2 uppercase text-sm tracking-wider`}>Sonuç Girişi</h4>
-                    {examType === 'BRANS' ? (
-                        <div className={`${colors.bgCard} border ${colors.border} rounded-xl p-6 max-w-md ${colors.shadow}`}>
-                            <div className="flex items-center justify-between">
-                                <span className={`font-bold ${colors.text} text-lg`}>{BRANCH_SUBJECTS.find(s=>s.id === formData.branchSubject)?.label}</span>
-                                <div className="flex gap-4">
-                                    <div><label className="text-xs text-emerald-500 font-bold block mb-1">Doğru</label><input type="number" className={`w-20 ${colors.inputBg} border ${colors.inputBorder} rounded p-3 ${colors.text} text-center font-bold text-lg focus:border-emerald-500 outline-none`} value={formData.details[formData.branchSubject]?.d || ''} onChange={e => updateDetail(formData.branchSubject, 'd', e.target.value)} /></div>
-                                    <div><label className="text-xs text-red-500 font-bold block mb-1">Yanlış</label><input type="number" className={`w-20 ${colors.inputBg} border ${colors.inputBorder} rounded p-3 ${colors.text} text-center font-bold text-lg focus:border-red-500 outline-none`} value={formData.details[formData.branchSubject]?.y || ''} onChange={e => updateDetail(formData.branchSubject, 'y', e.target.value)} /></div>
-                                </div>
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">{EXAM_TYPES[examType].groups.map((group, idx) => (<div key={idx} className={`${colors.bgCard} border ${colors.border} rounded-xl p-5 ${colors.shadow}`}><h5 className={`${colors.text} font-bold mb-4 flex items-center gap-2`}><div className="w-2 h-2 rounded-full bg-orange-500"></div>{group.title}</h5><div className="space-y-3">{group.sections.map(sec => (<div key={sec.key} className={`flex items-center justify-between ${colors.isDark ? 'bg-slate-800/50' : 'bg-slate-50'} p-3 rounded-lg border ${colors.border}`}><div><span className={`block text-sm font-medium ${colors.textSec}`}>{sec.label}</span><span className={`text-[10px] ${colors.textSec}`}>{sec.q} Soru</span></div><div className="flex gap-2"><input type="number" placeholder="D" className={`w-14 ${colors.inputBg} border ${colors.inputBorder} rounded p-2 ${colors.text} text-center text-sm focus:border-orange-500 outline-none`} value={formData.details[sec.key]?.d || ''} onChange={e => updateDetail(sec.key, 'd', e.target.value)} /><input type="number" placeholder="Y" className={`w-14 ${colors.inputBg} border ${colors.inputBorder} rounded p-2 ${colors.text} text-center text-sm focus:border-red-500 outline-none`} value={formData.details[sec.key]?.y || ''} onChange={e => updateDetail(sec.key, 'y', e.target.value)} /></div></div>))}</div></div>))}</div>
-                    )}
-                </div>
-                {examType !== 'BRANS' && (
-                    <div className={`mb-8 ${colors.bgCardTransparent} rounded-xl border ${colors.border} p-4`}>
-                        <h4 className={`${colors.textSec} text-sm font-bold mb-4 flex items-center gap-2`}><Activity size={16} /> Sıralama Bilgileri (İsteğe Bağlı)</h4>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">{['turkey', 'city', 'school'].map(scope => (<div key={scope} className={`${colors.bgCard} p-4 rounded-lg border ${colors.border} ${colors.shadow}`}><label className={`block text-xs font-bold ${colors.textSec} mb-2 uppercase`}>{scope === 'turkey' ? 'Türkiye' : scope === 'city' ? 'İl Geneli' : 'Kurum'}</label><div className="flex gap-2"><input placeholder="Sıralama" type="number" className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded p-2 text-sm ${colors.text}`} value={formData.stats[scope].rank} onChange={e => updateStat(scope, 'rank', e.target.value)} /><input placeholder="Katılım" type="number" className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded p-2 text-sm ${colors.text}`} value={formData.stats[scope].total} onChange={e => updateStat(scope, 'total', e.target.value)} /></div></div>))}</div>
-                    </div>
-                )}
-                <div className={`flex justify-end gap-4 border-t ${colors.border} pt-6`}>
-                    <Button variant="secondary" onClick={() => { setView('list'); setEditingId(null); }}>İptal</Button>
-                    <Button onClick={handleSave} size="large" icon={Save}>{editingId ? 'Güncelle' : 'Kaydet'}</Button>
-                </div>
-            </Card>
+        <div className="max-w-5xl mx-auto animate-fade-in"><Card title="Sınav Girişi">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <Input label="Deneme Adı" value={formData.name} onChange={e=>setFormData({...formData, name: e.target.value})}/>
+                <Input label="Tarih" type="date" value={formData.date} onChange={e=>setFormData({...formData, date: e.target.value})}/>
+                {examType === 'BRANS' && (<Input label="Süre (Dk)" type="number" value={formData.duration} onChange={e=>setFormData({...formData, duration: e.target.value})} />)}
+                <div className="pt-6"><Button onClick={()=>setShowTopicModal(true)} variant="secondary" className="w-full">Yanlış Konuları Gir ({formData.wrongTopics?.length})</Button></div>
+            </div>
+            <div className="space-y-6 mb-8"><h4 className={`text-orange-500 font-bold border-b ${colors.border} pb-2`}>Sonuçlar</h4><div className="grid grid-cols-1 lg:grid-cols-2 gap-6">{EXAM_TYPES[examType].groups.map((group, idx) => (<div key={idx} className={`${colors.bgCard} border ${colors.border} rounded-xl p-5`}><h5 className={`${colors.text} font-bold mb-4`}>{group.title}</h5><div className="space-y-3">{group.sections.map(sec => (<div key={sec.key} className="flex justify-between items-center"><span className="text-sm">{sec.label}</span><div className="flex gap-2"><input type="number" placeholder="D" className={`w-14 ${colors.inputBg} border rounded p-1 text-center`} value={formData.details[sec.key]?.d || ''} onChange={e => updateDetail(sec.key, 'd', e.target.value)} /><input type="number" placeholder="Y" className={`w-14 ${colors.inputBg} border rounded p-1 text-center`} value={formData.details[sec.key]?.y || ''} onChange={e => updateDetail(sec.key, 'y', e.target.value)} /></div></div>))}</div></div>))}</div></div>
+            {examType !== 'BRANS' && (<div className={`mb-8 ${colors.bgCardTransparent} rounded-xl border ${colors.border} p-4`}><h4 className={`${colors.textSec} text-sm font-bold mb-4 flex items-center gap-2`}><Activity size={16} /> Sıralama Bilgileri (İsteğe Bağlı)</h4><div className="grid grid-cols-1 md:grid-cols-3 gap-6">{['turkey', 'city', 'school'].map(scope => (<div key={scope} className={`${colors.bgCard} p-4 rounded-lg border ${colors.border} ${colors.shadow}`}><label className={`block text-xs font-bold ${colors.textSec} mb-2 uppercase`}>{scope === 'turkey' ? 'Türkiye' : scope === 'city' ? 'İl Geneli' : 'Kurum'}</label><div className="flex gap-2"><input placeholder="Sıralama" type="number" className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded p-2 text-sm ${colors.text}`} value={formData.stats[scope].rank} onChange={e => updateStat(scope, 'rank', e.target.value)} /><input placeholder="Katılım" type="number" className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded p-2 text-sm ${colors.text}`} value={formData.stats[scope].total} onChange={e => updateStat(scope, 'total', e.target.value)} /></div></div>))}</div></div>)}
+            <div className="flex justify-end gap-4"><Button variant="secondary" onClick={()=>{setView('list'); setEditingId(null);}}>İptal</Button><Button onClick={handleSave} size="large">Kaydet</Button></div></Card>
         </div>
       )}
 
-      {/* SIRALAMA GÖSTERİM MODALI */}
-      {showRankModal && (
-        <Modal title={`${showRankModal.name} - Sıralama Sonuçları`} onClose={() => setShowRankModal(null)}>
-            <div className="space-y-4">
-                <div className="grid grid-cols-1 gap-4">
-                    <div className={`${colors.bgCardTransparent} p-4 rounded border ${colors.border}`}>
-                        <div className="text-sm font-bold text-orange-500 mb-1">Türkiye Geneli</div>
-                        <div className={`text-xl font-bold ${colors.text}`}>
-                            {showRankModal.stats?.turkey?.rank ? showRankModal.stats.turkey.rank : '-'} 
-                            <span className="text-sm font-normal text-slate-500"> / {showRankModal.stats?.turkey?.total || '-'}</span>
-                        </div>
-                    </div>
-                    <div className={`${colors.bgCardTransparent} p-4 rounded border ${colors.border}`}>
-                        <div className="text-sm font-bold text-blue-500 mb-1">İl Geneli</div>
-                        <div className={`text-xl font-bold ${colors.text}`}>
-                            {showRankModal.stats?.city?.rank ? showRankModal.stats.city.rank : '-'} 
-                            <span className="text-sm font-normal text-slate-500"> / {showRankModal.stats?.city?.total || '-'}</span>
-                        </div>
-                    </div>
-                    <div className={`${colors.bgCardTransparent} p-4 rounded border ${colors.border}`}>
-                        <div className="text-sm font-bold text-emerald-500 mb-1">Kurum/Okul Geneli</div>
-                        <div className={`text-xl font-bold ${colors.text}`}>
-                            {showRankModal.stats?.school?.rank ? showRankModal.stats.school.rank : '-'} 
-                            <span className="text-sm font-normal text-slate-500"> / {showRankModal.stats?.school?.total || '-'}</span>
-                        </div>
-                    </div>
-                </div>
-                <div className="text-xs text-center text-slate-500 mt-2">Bu veriler öğrenci tarafından manuel olarak girilmiştir.</div>
-            </div>
-        </Modal>
-      )}
-
-      <DeleteConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={confirmDelete} />
+      {showTopicModal && (<Modal title="Yanlış Konu Girişi" onClose={()=>setShowTopicModal(false)}><div className="space-y-4"><div className="grid grid-cols-3 gap-2"><select className={`col-span-3 ${colors.inputBg} border ${colors.inputBorder} p-2 rounded text-sm ${colors.text}`} value={topicSelection.course} onChange={e=>setTopicSelection({...topicSelection, course: e.target.value, unit: '', topic: ''})}><option value="">Ders Seçiniz</option>{activeCurriculum.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>{topicSelection.course && <select className={`col-span-3 ${colors.inputBg} border ${colors.inputBorder} p-2 rounded text-sm ${colors.text}`} value={topicSelection.unit} onChange={e=>setTopicSelection({...topicSelection, unit: e.target.value, topic: ''})}><option value="">Ünite Seçiniz</option>{activeCurriculum.find(c=>c.id===topicSelection.course)?.units.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>}{topicSelection.unit && <select className={`col-span-3 ${colors.inputBg} border ${colors.inputBorder} p-2 rounded text-sm ${colors.text}`} value={topicSelection.topic} onChange={e=>setTopicSelection({...topicSelection, topic: e.target.value})}><option value="">Konu Seçiniz</option>{activeCurriculum.find(c=>c.id===topicSelection.course)?.units.find(u=>u.id===topicSelection.unit)?.topics.map(t=><option key={t} value={t}>{t}</option>)}</select>}{topicSelection.topic && <div className="col-span-2"><input type="number" placeholder="Soru Sayısı (Ops)" className={`w-full ${colors.inputBg} border ${colors.inputBorder} p-2 rounded text-sm ${colors.text}`} value={topicSelection.count} onChange={e=>setTopicSelection({...topicSelection, count: e.target.value})} /></div>}{topicSelection.topic && <Button onClick={handleAddWrongTopic}>Ekle</Button>}</div><div className="border-t border-slate-700 pt-4"><h4 className="text-xs font-bold text-slate-500 mb-2">Eklenen Konular</h4><div className="space-y-2">{formData.wrongTopics.map(t => (<div key={t.id} className={`flex justify-between items-center p-2 rounded border ${colors.border} ${colors.bgCard}`}><span className={`text-sm ${colors.text}`}>{t.name} <span className="text-xs text-slate-500">({t.course})</span></span><div className="flex items-center gap-2"><span className="text-xs bg-orange-500/20 text-orange-500 px-2 rounded">{t.count} Soru</span><button onClick={()=>removeWrongTopic(t.id)} className="text-red-500"><X size={14}/></button></div></div>))}</div></div><Button onClick={()=>setShowTopicModal(false)} className="w-full mt-2">Tamamla</Button></div></Modal>)}
+      {showWrongTopicsModal && (<Modal title={`${showWrongTopicsModal.name} - Yanlış Konular`} onClose={()=>setShowWrongTopicsModal(null)}><div className="space-y-2">{showWrongTopicsModal.wrongTopics?.length > 0 ? showWrongTopicsModal.wrongTopics.map((t, i) => (<div key={i} className={`flex justify-between items-center p-3 rounded border ${colors.border} ${colors.bgCard}`}><span className={`text-sm ${colors.text}`}>{t.name} <span className="text-xs text-slate-500">({t.course})</span></span><span className="text-xs font-bold bg-red-500/10 text-red-500 px-2 py-1 rounded">{t.count} Soru</span></div>)) : <div className="text-center text-slate-500 py-4">Kayıtlı yanlış konu yok.</div>}</div></Modal>)}
+      {showRankModal && (<Modal title={`${showRankModal.name} - Sıralama Sonuçları`} onClose={() => setShowRankModal(null)}><div className="space-y-4"><div className="grid grid-cols-1 gap-4">{['turkey', 'city', 'school'].map(scope => (<div key={scope} className={`${colors.bgCardTransparent} p-4 rounded border ${colors.border}`}><div className={`text-sm font-bold mb-1 ${scope === 'turkey' ? 'text-orange-500' : scope === 'city' ? 'text-blue-500' : 'text-emerald-500'}`}>{scope === 'turkey' ? 'Türkiye' : scope === 'city' ? 'İl' : 'Kurum'} Geneli</div><div className={`text-xl font-bold ${colors.text}`}>{showRankModal.stats?.[scope]?.rank || '-'} <span className="text-sm font-normal text-slate-500"> / {showRankModal.stats?.[scope]?.total || '-'}</span></div></div>))}</div></div></Modal>)}
+      <DeleteConfirmModal isOpen={!!deleteConfirm} onClose={()=>setDeleteConfirm(null)} onConfirm={()=>confirmDelete()} />
     </div>
   );
 };
 
-// 6. DUYGUDURUM TAKİBİ
+// 6. DUYGUDURUM TAKİBİ (GÜNCELLENMİŞ: Son 10 Veri Grafiği)
 const MoodModule = ({ student, onUpdateStudent, user }) => {
   const METRICS_CONFIG = [{ key: 'motivation', label: 'Motivasyon', color: '#3b82f6' }, { key: 'happiness', label: 'Mutluluk', color: '#10b981' }, { key: 'social', label: 'Sosyalleşme', color: '#f59e0b' }, { key: 'examAnxiety', label: 'Sınav Kaygısı', color: '#ef4444' }, { key: 'lessonAnxiety', label: 'Ders Kaygısı', color: '#8b5cf6' }, { key: 'performance', label: 'Performans', color: '#ec4899' }, { key: 'homeworkRate', label: 'Ödev Tamamlama', color: '#06b6d4' }];
   const [editingId, setEditingId] = useState(null); const [formData, setFormData] = useState({ date: new Date().toISOString().split('T')[0], metrics: { motivation: 50, happiness: 50, social: 50, examAnxiety: 50, lessonAnxiety: 50, performance: 50, homeworkRate: 50 } });
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const colors = useThemeColors();
-if (user.role === 'student') return <div className={`${colors.text} text-center mt-20`}>Bu alana erişim yetkiniz yok.</div>;
+  if (user.role === 'student') return <div className={`${colors.text} text-center mt-20`}>Bu alana erişim yetkiniz yok.</div>;
   const handleSave = () => { let newMoods = [...student.moods]; if (editingId) { newMoods = newMoods.map(m => m.id === editingId ? { ...m, date: formData.date, metrics: formData.metrics } : m); } else { newMoods.push({ id: Date.now(), date: formData.date, metrics: formData.metrics }); } onUpdateStudent({ ...student, moods: newMoods }); setEditingId(null); setFormData({ ...formData, date: new Date().toISOString().split('T')[0] }); };
   const handleEdit = (mood) => { setEditingId(mood.id); setFormData({ date: mood.date, metrics: { ...mood.metrics } }); window.scrollTo(0,0); };
   const requestDelete = (e, id) => { e.stopPropagation(); e.preventDefault(); setDeleteConfirm(id); };
   const confirmDelete = () => { if (deleteConfirm) { const filtered = student.moods.filter(m => m.id !== deleteConfirm); onUpdateStudent({ ...student, moods: filtered }); setDeleteConfirm(null); } };
   const sortedMoods = [...student.moods].sort((a,b) => new Date(a.date) - new Date(b.date)); 
   
-  // LOGIC UPDATE: Composite score calculation excluding Stress Factors
+  // SADECE SON 10 VERİ GRAFİKTE GÖRÜNÜR
   const flatData = sortedMoods.map(m => {
-    // Exclude examAnxiety and lessonAnxiety from the average calculation
     const { examAnxiety, lessonAnxiety, ...positiveMetrics } = m.metrics;
     const values = Object.values(positiveMetrics);
-    
-    // Calculate average only from positive/neutral indicators
     const average = values.reduce((a, b) => a + b, 0) / values.length;
-    
     return { date: m.date.substring(5), ...m.metrics, average: average };
-  });
+  }).slice(-10); 
 
   return (
-    <div className="space-y-8 animate-fade-in"><Card title={editingId ? "Duygudurum Düzenle" : "Yeni Duygudurum Girişi"} action={<div className="flex gap-4 items-center"><input type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className={`${colors.inputBg} border ${colors.inputBorder} ${colors.text} p-2 rounded text-sm`}/><Button onClick={handleSave}>{editingId ? 'Güncelle' : 'Kaydet'}</Button></div>}><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">{METRICS_CONFIG.map(m => (<div key={m.key} className={`${colors.bgCardTransparent} p-4 rounded-lg border ${colors.border}`}><label className={`block text-sm ${colors.textSec} mb-2 font-medium`}>{m.label}</label><div className="flex items-center gap-3"><input type="range" min="0" max="100" value={formData.metrics[m.key]} onChange={e => setFormData({...formData, metrics: {...formData.metrics, [m.key]: parseInt(e.target.value)}})} className={`w-full accent-orange-500 h-2 ${colors.isDark ? 'bg-slate-700' : 'bg-slate-200'} rounded-lg appearance-none cursor-pointer`}/><span className={`${colors.text} font-bold w-10 text-right`}>{formData.metrics[m.key]}%</span></div></div>))}</div></Card><Card title="Kompozit Analiz (Stres Faktörleri Hariç)"><div className="h-64"><LineChart data={flatData} dataKey="average" labelKey="date" color="#3b82f6" /></div></Card><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">{METRICS_CONFIG.map(metric => (<Card key={metric.key} title={metric.label} className="!p-4"><div className="h-40"><LineChart data={flatData} dataKey={metric.key} labelKey="date" color={metric.color} height={160} /></div></Card>))}</div><Card title="Geçmiş Kayıtlar"><div className="overflow-x-auto"><table className={`w-full text-left text-sm ${colors.textSec}`}><thead className={colors.tableHeader}><tr><th className="p-4">Tarih</th>{METRICS_CONFIG.map(m => <th key={m.key} className="p-4">{m.label}</th>)}<th className="p-4">İşlem</th></tr></thead><tbody className={colors.divider}>
-  {student.moods
-    .sort((a,b)=> new Date(b.date)-new Date(a.date))
-    .map(mood => (
-      <tr key={mood.id} className={`border-b ${colors.border}`}>
-        {/* TARİH FORMATI DÜZELTİLDİ */}
-        <td className="p-4">{formatDate(mood.date)}</td>
-        {METRICS_CONFIG.map(m => <td key={m.key} className="p-4 text-center">{mood.metrics[m.key]}</td>)}
-        <td className="p-4 flex gap-2">
-          <button onClick={() => handleEdit(mood)}><Edit2 size="14" className="text-blue-400"/></button>
-          <button onClick={(e) => requestDelete(e, mood.id)} className="hover:text-red-500"><Trash2 size="14" className="text-red-400"/></button>
-        </td>
-      </tr>
-    ))}
-</tbody></table></div></Card>
+    <div className="space-y-8 animate-fade-in"><Card title={editingId ? "Duygudurum Düzenle" : "Yeni Duygudurum Girişi"} action={<div className="flex gap-4 items-center"><input type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className={`${colors.inputBg} border ${colors.inputBorder} ${colors.text} p-2 rounded text-sm`}/><Button onClick={handleSave}>{editingId ? 'Güncelle' : 'Kaydet'}</Button></div>}><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">{METRICS_CONFIG.map(m => (<div key={m.key} className={`${colors.bgCardTransparent} p-4 rounded-lg border ${colors.border}`}><label className={`block text-sm ${colors.textSec} mb-2 font-medium`}>{m.label}</label><div className="flex items-center gap-3"><input type="range" min="0" max="100" value={formData.metrics[m.key]} onChange={e => setFormData({...formData, metrics: {...formData.metrics, [m.key]: parseInt(e.target.value)}})} className={`w-full accent-orange-500 h-2 ${colors.isDark ? 'bg-slate-700' : 'bg-slate-200'} rounded-lg appearance-none cursor-pointer`}/><span className={`${colors.text} font-bold w-10 text-right`}>{formData.metrics[m.key]}%</span></div></div>))}</div></Card>
+    <Card title="Kompozit Analiz (Son 10 Kayıt)"><div className="h-64"><LineChart data={flatData} dataKey="average" labelKey="date" color="#3b82f6" fixedRange={true} /></div></Card>
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">{METRICS_CONFIG.map(metric => (<Card key={metric.key} title={metric.label} className="!p-4"><div className="h-40"><LineChart data={flatData} dataKey={metric.key} labelKey="date" color={metric.color} height={160} fixedRange={true} /></div></Card>))}</div><Card title="Geçmiş Kayıtlar (Tümü)"><div className="overflow-x-auto"><table className={`w-full text-left text-sm ${colors.textSec}`}><thead className={colors.tableHeader}><tr><th className="p-4">Tarih</th>{METRICS_CONFIG.map(m => <th key={m.key} className="p-4">{m.label}</th>)}<th className="p-4">İşlem</th></tr></thead><tbody className={colors.divider}>
+  {student.moods.sort((a,b)=> new Date(b.date)-new Date(a.date)).map(mood => (<tr key={mood.id} className={`border-b ${colors.border}`}><td className="p-4">{formatDate(mood.date)}</td>{METRICS_CONFIG.map(m => <td key={m.key} className="p-4 text-center">{mood.metrics[m.key]}</td>)}<td className="p-4 flex gap-2"><button onClick={() => handleEdit(mood)}><Edit2 size="14" className="text-blue-400"/></button><button onClick={(e) => requestDelete(e, mood.id)} className="hover:text-red-500"><Trash2 size="14" className="text-red-400"/></button></td></tr>))}</tbody></table></div></Card>
     <DeleteConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={confirmDelete} />
     </div>
   );
@@ -1731,44 +1229,99 @@ const InterviewModule = ({ student, onUpdateStudent, user }) => {
   );
 };
 
+// 8. ÖDEME TAKİBİ (DÜZELTİLDİ: Özet Kartlar Geri Geldi & Yıllık Tablo Entegre Edildi)
 const PaymentModule = ({ student, onUpdateStudent, user }) => {
-  const [showModal, setShowModal] = useState(false); const [newPayment, setNewPayment] = useState({ date: new Date().toISOString().split('T')[0], amount: "", description: "", method: "Nakit" });
+  const [showModal, setShowModal] = useState(false); 
+  const [newPayment, setNewPayment] = useState({ date: new Date().toISOString().split('T')[0], amount: "", description: "", method: "Nakit" });
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const colors = useThemeColors();
+  
+  // Yıllık Kontrol Listesi Mantığı
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const checkedMonths = student.paidMonths?.[selectedYear] || [];
+
+  // Hesaplamalar (GERİ GELDİ)
+  const totalAmount = student.payments.reduce((acc, curr) => acc + (parseFloat(curr.amount) || 0), 0);
+  const lastPayment = student.payments.length > 0 
+    ? student.payments.sort((a,b) => new Date(b.date) - new Date(a.date))[0] 
+    : null;
+
+  const toggleMonth = (monthIndex) => {
+      const current = student.paidMonths || {};
+      const yearData = current[selectedYear] || [];
+      const newData = yearData.includes(monthIndex) ? yearData.filter(m => m !== monthIndex) : [...yearData, monthIndex];
+      onUpdateStudent({ ...student, paidMonths: { ...current, [selectedYear]: newData } });
+  };
+
   const handleAdd = () => { if (!newPayment.amount) return; const payment = { id: Date.now(), ...newPayment }; onUpdateStudent({ ...student, payments: [payment, ...student.payments] }); setShowModal(false); setNewPayment({ date: new Date().toISOString().split('T')[0], amount: "", description: "", method: "Nakit" }); };
-  const requestDelete = (e, id) => { e.stopPropagation(); e.preventDefault(); setDeleteConfirm(id); };
   const confirmDelete = () => { if (deleteConfirm) { const filtered = student.payments.filter(p => p.id !== deleteConfirm); onUpdateStudent({ ...student, payments: filtered }); setDeleteConfirm(null); } };
-   if (user.role === 'student') return <div className={`${colors.text} text-center mt-20`}>Bu alana erişim yetkiniz yok.</div>;
-  const totalPaid = student.payments.reduce((acc, curr) => acc + Number(curr.amount), 0);
+  
+  if (user.role === 'student') return <div className={`${colors.text} text-center mt-20`}>Erişim yetkisi yok.</div>;
+  
+  const MONTHS = ["Oca", "Şub", "Mar", "Nis", "May", "Haz", "Tem", "Ağu", "Eyl", "Eki", "Kas", "Ara"];
+
   return (
-    <div className="animate-fade-in space-y-6"><div className="flex justify-between items-center"><h2 className={`text-2xl font-bold ${colors.text}`}>Ödeme Takibi</h2><Button onClick={() => setShowModal(true)} icon={Plus}>Ödeme Ekle</Button></div><div className="grid grid-cols-1 md:grid-cols-3 gap-6"><Card className={`border-l-4 border-l-emerald-500 ${colors.bgCard}`}><div className={`${colors.textSec} text-xs uppercase font-bold mb-2`}>Toplam Tahsilat</div><div className={`text-3xl font-bold ${colors.text}`}>{totalPaid.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}</div></Card><Card className={`border-l-4 border-l-blue-500 ${colors.bgCard}`}><div className={`${colors.textSec} text-xs uppercase font-bold mb-2`}>Son İşlem</div><div className={`text-xl font-bold ${colors.text}`}>{student.payments[0]?.date || '-'}</div></Card></div><Card title="Ödeme Geçmişi"><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className={colors.tableHeader}><tr><th className="p-4">Tarih</th><th className="p-4">Açıklama</th><th className="p-4">Yöntem</th><th className="p-4 text-right">Tutar</th><th className="p-4 text-right">İşlem</th></tr></thead><tbody className={`divide-y ${colors.divider} ${colors.textSec}`}>
-  {student.payments
-    .sort((a, b) => new Date(b.date) - new Date(a.date)) // 1. TARİHE GÖRE SIRALAMA (YENİDEN ESKİYE)
-    .map(p => (
-    <tr key={p.id} className={colors.hoverBg}>
-      <td className="p-4">{formatDate(p.date)}</td> {/* 2. TARİH FORMATI DÜZELTİLDİ */}
-      <td className={`p-4 font-medium ${colors.text}`}>{p.description}</td>
-      <td className="p-4">
-        <span className={`${colors.isDark ? 'bg-slate-800' : 'bg-slate-200'} px-2 py-1 rounded text-xs`}>
-          {p.method}
-        </span>
-      </td>
-      <td className="p-4 text-right font-bold text-emerald-400">
-        {Number(p.amount).toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}
-      </td>
-      <td className="p-4 text-right">
-        <button onClick={(e) => requestDelete(e, p.id)} className="text-slate-500 hover:text-red-500 p-2">
-          <Trash2 size={16}/>
-        </button>
-      </td>
-    </tr>
-  ))}
-  {student.payments.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-slate-500">Ödeme kaydı bulunamadı.</td></tr>}
-</tbody></table></div></Card>{showModal && (<Modal title="Yeni Ödeme Alındısı" onClose={() => setShowModal(false)}><div className="space-y-4"><Input label="Tarih" type="date" value={newPayment.date} onChange={e => setNewPayment({...newPayment, date: e.target.value})} /><Input label="Tutar (TL)" type="number" value={newPayment.amount} onChange={e => setNewPayment({...newPayment, amount: e.target.value})} /><Input label="Açıklama" placeholder="Örn: Kasım 2025 Koçluk Ücreti" value={newPayment.description} onChange={e => setNewPayment({...newPayment, description: e.target.value})} /><div><label className={`block text-xs font-medium ${colors.textSec} mb-2 uppercase`}>Ödeme Yöntemi</label><select className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg p-3 ${colors.text} focus:border-orange-500 outline-none`} value={newPayment.method} onChange={e => setNewPayment({...newPayment, method: e.target.value})}><option>Nakit</option><option>Havale/EFT</option><option>Kredi Kartı</option></select></div><Button onClick={handleAdd} className="w-full mt-4">Kaydet</Button></div></Modal>)}
-    <DeleteConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={confirmDelete} />
+    <div className="animate-fade-in space-y-6">
+      <div className="flex justify-between items-center"><h2 className={`text-2xl font-bold ${colors.text}`}>Ödeme Takibi</h2><Button onClick={() => setShowModal(true)} icon={Plus}>Ödeme Ekle</Button></div>
+      
+      {/* ÜST KISIM: ÖZETLER VE YILLIK ÇİZELGE YAN YANA */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* SOL: ÖZET KARTLARI (GERİ GELDİ) */}
+          <div className="lg:col-span-1 space-y-4">
+              <div className="bg-gradient-to-br from-emerald-900 to-emerald-800 p-6 rounded-xl text-white shadow-lg relative overflow-hidden">
+                  <div className="relative z-10">
+                      <div className="text-xs font-bold opacity-70 mb-1">TOPLAM TAHSİLAT</div>
+                      <div className="text-3xl font-bold">{totalAmount.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}</div>
+                  </div>
+                  <div className="absolute right-0 top-0 p-4 opacity-10"><CreditCard size={64}/></div>
+              </div>
+              <div className={`p-6 rounded-xl border ${colors.border} ${colors.bgCard} shadow flex justify-between items-center`}>
+                  <div>
+                      <div className={`text-xs font-bold ${colors.textSec} mb-1`}>SON İŞLEM</div>
+                      <div className={`text-xl font-bold ${colors.text}`}>{lastPayment ? formatDate(lastPayment.date) : '-'}</div>
+                  </div>
+                  {lastPayment && <div className="text-right"><div className="text-xs text-emerald-500 font-bold">+{Number(lastPayment.amount).toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}</div></div>}
+              </div>
+          </div>
+
+          {/* SAĞ: YILLIK ÇİZELGE (MİNİMAL) */}
+          <div className="lg:col-span-2">
+              <Card className="h-full">
+                  <div className="flex items-center justify-between mb-4 border-b border-gray-700 pb-2">
+                      <h3 className={`font-bold ${colors.text}`}>Yıllık Takip</h3>
+                      <div className="flex items-center gap-2">
+                          <button onClick={() => setSelectedYear(selectedYear - 1)} className={`p-1 rounded hover:bg-slate-700 ${colors.textSec}`}><ChevronDown size={16} className="rotate-90" /></button>
+                          <span className={`font-bold ${colors.text} text-sm`}>{selectedYear}</span>
+                          <button onClick={() => setSelectedYear(selectedYear + 1)} className={`p-1 rounded hover:bg-slate-700 ${colors.textSec}`}><ChevronRight size={16} /></button>
+                      </div>
+                  </div>
+                  <div className="grid grid-cols-4 md:grid-cols-6 gap-2">
+                      {MONTHS.map((m, idx) => {
+                          const isPaid = checkedMonths.includes(idx);
+                          return (
+                              <div key={idx} onClick={() => toggleMonth(idx)} className={`p-2 rounded border cursor-pointer transition-all flex flex-col items-center justify-center gap-1 ${isPaid ? 'bg-emerald-500/10 border-emerald-500' : `${colors.bgCardTransparent} ${colors.border}`}`}>
+                                  <span className={`text-xs font-bold ${isPaid ? 'text-emerald-500' : colors.textSec}`}>{m}</span>
+                                  {isPaid ? <Check size={14} className="text-emerald-500" /> : <div className="w-3.5 h-3.5 rounded-full border border-slate-600"></div>}
+                              </div>
+                          )
+                      })}
+                  </div>
+              </Card>
+          </div>
+      </div>
+
+      {/* ALT: DETAYLI TABLO */}
+      <Card title="Ödeme Geçmişi"><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className={colors.tableHeader}><tr><th className="p-4">Tarih</th><th className="p-4">Açıklama</th><th className="p-4">Yöntem</th><th className="p-4 text-right">Tutar</th><th className="p-4 text-right">İşlem</th></tr></thead><tbody className={`divide-y ${colors.divider} ${colors.textSec}`}>
+      {student.payments.sort((a, b) => new Date(b.date) - new Date(a.date)).map(p => (
+        <tr key={p.id} className={colors.hoverBg}><td className="p-4">{formatDate(p.date)}</td><td className={`p-4 font-medium ${colors.text}`}>{p.description}</td><td className="p-4"><span className={`${colors.isDark ? 'bg-slate-800' : 'bg-slate-200'} px-2 py-1 rounded text-xs`}>{p.method}</span></td><td className="p-4 text-right font-bold text-emerald-400">{Number(p.amount).toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' })}</td><td className="p-4 text-right"><button onClick={(e) => setDeleteConfirm(p.id)} className="text-slate-500 hover:text-red-500 p-2"><Trash2 size={16}/></button></td></tr>
+      ))}</tbody></table></div></Card>
+      
+      {showModal && (<Modal title="Yeni Ödeme" onClose={() => setShowModal(false)}><div className="space-y-4"><Input label="Tarih" type="date" value={newPayment.date} onChange={e => setNewPayment({...newPayment, date: e.target.value})} /><Input label="Tutar" type="number" value={newPayment.amount} onChange={e => setNewPayment({...newPayment, amount: e.target.value})} /><Input label="Açıklama" value={newPayment.description} onChange={e => setNewPayment({...newPayment, description: e.target.value})} /><div className="grid grid-cols-2 gap-4"><button onClick={()=>setNewPayment({...newPayment, method:'Nakit'})} className={`p-2 rounded border ${newPayment.method==='Nakit'?'bg-orange-600 text-white border-orange-600':`${colors.bgCard} ${colors.border}`}`}>Nakit</button><button onClick={()=>setNewPayment({...newPayment, method:'Havale/EFT'})} className={`p-2 rounded border ${newPayment.method==='Havale/EFT'?'bg-orange-600 text-white border-orange-600':`${colors.bgCard} ${colors.border}`}`}>Havale/EFT</button></div><Button onClick={handleAdd} className="w-full mt-4">Kaydet</Button></div></Modal>)}
+      <DeleteConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={confirmDelete} />
     </div>
   );
 };
+
 // --- LANDING PAGE (KARŞILAMA EKRANI) ---
 const LandingPage = ({ onGoToLogin }) => {
   return (
@@ -1924,59 +1477,42 @@ const LoginScreen = ({ onLogin, students, admins, isFirebase, isLoading }) => {
   );
 };
 
-// --- ANA UYGULAMA ---
-  // --- ANA UYGULAMA (GÜNCELLENMİŞ) ---
+// --- ANA UYGULAMA (GÜNCELLENMİŞ: Bildirim Filtresi & Veri Akışı) ---
 const MainApp = () => {
   const [user, setUser] = useState(null);
   const [students, setStudents] = useState(INITIAL_STUDENTS);
   const [admins, setAdmins] = useState(INITIAL_ADMINS);
-  
-  // YENİ: Sınıflar State'i
   const [classes, setClasses] = useState([]);
-  
-  // YENİ: View Mode (Landing -> Login -> App)
-  const [viewMode, setViewMode] = useState('landing'); // 'landing', 'login', 'app'
-
+  const [notifications, setNotifications] = useState([]); 
+  const [viewMode, setViewMode] = useState('landing');
   const [curriculum, setCurriculum] = useState(INITIAL_CURRICULUM);
   const [selectedStudentId, setSelectedStudentId] = useState(null);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(isFirebaseActive); 
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showNotifModal, setShowNotifModal] = useState(false);
   const { theme, toggleTheme } = useTheme();
   const colors = useThemeColors();
 
-  // VERİ YÜKLEME (Firebase Dinleyicileri)
   useEffect(() => {
     if (isFirebaseActive) {
       setIsLoading(true);
-      // Öğrencileri Çek
-      const qStudents = query(collection(db, "students"));
-      const unsubStudents = onSnapshot(qStudents, (snapshot) => { 
-          const data = []; 
-          snapshot.forEach(doc => data.push({id: doc.id, ...doc.data()})); 
-          setStudents(data); 
-          // Loading sadece burada false oluyor, diğerleri arka planda güncellenebilir
-          setIsLoading(false); 
+      const unsubStudents = onSnapshot(query(collection(db, "students")), (snap) => { 
+          setStudents(snap.docs.map(doc => ({id: doc.id, ...doc.data()}))); setIsLoading(false); 
       });
-      // Adminleri Çek
-      const qAdmins = query(collection(db, "admins"));
-      const unsubAdmins = onSnapshot(qAdmins, (snapshot) => { 
-          const data = []; 
-          snapshot.forEach(doc => data.push({id: doc.id, ...doc.data()})); 
-          if(data.length === 0) setAdmins(INITIAL_ADMINS); else setAdmins(data); 
+      const unsubAdmins = onSnapshot(query(collection(db, "admins")), (snap) => { 
+          const data = snap.docs.map(doc => ({id: doc.id, ...doc.data()}));
+          if(data.length > 0) setAdmins(data); 
       });
-
-      // YENİ: Sınıfları Çek
-      const qClasses = query(collection(db, "classes"));
-      const unsubClasses = onSnapshot(qClasses, (snapshot) => {
-          const data = [];
-          snapshot.forEach(doc => data.push({id: doc.id, ...doc.data()}));
-          setClasses(data);
+      const unsubClasses = onSnapshot(query(collection(db, "classes")), (snap) => {
+          setClasses(snap.docs.map(doc => ({id: doc.id, ...doc.data()})));
       });
-
-      return () => { unsubStudents(); unsubAdmins(); unsubClasses(); };
-    }
+      const unsubNotif = onSnapshot(query(collection(db, "notifications")), (snap) => {
+          setNotifications(snap.docs.map(doc => ({id: doc.id, ...doc.data()})).sort((a,b) => new Date(b.date) - new Date(a.date)));
+      });
+      return () => { unsubStudents(); unsubAdmins(); unsubClasses(); unsubNotif(); };
+    } else { setIsLoading(false); }
   }, []);
 
   const myStudents = React.useMemo(() => {
@@ -1984,6 +1520,50 @@ const MainApp = () => {
     if (user.role === 'student') return students.filter(s => s.id === user.id);
     return students.filter(s => s.teacherId === user.id);
   }, [user, students]);
+
+  const myClasses = React.useMemo(() => {
+      if(!user) return [];
+      if(user.role === 'superadmin') return classes;
+      return classes.filter(c => c.teacherId === user.id);
+  }, [user, classes]);
+
+  const licenseInfo = React.useMemo(() => {
+      if(!user || user.role === 'student' || user.role === 'superadmin') return { daysLeft: 999, isExpired: false, limit: 9999 };
+      const currentAdmin = admins.find(a => a.id === user.id) || user;
+      const daysLeft = currentAdmin.endDate ? Math.ceil((new Date(currentAdmin.endDate) - new Date()) / (1000 * 60 * 60 * 24)) : 0;
+      return { daysLeft, isExpired: daysLeft < 0, limit: currentAdmin.studentLimit || 20, used: myStudents.length };
+  }, [user, admins, myStudents]);
+
+  // --- BİLDİRİM FİLTRESİ (DÜZELTİLDİ: Sınıf Duyurusu İzolasyonu) ---
+  const myNotifications = React.useMemo(() => {
+      if(!user) return [];
+      return notifications.filter(n => {
+          // ÖZEL DURUM: 'my_students' hedefli (Öğretmen -> Sınıf) mesajlar
+          if (n.target === 'my_students') {
+              // Gönderen kişi mesajı görebilir (Öğretmen veya Süperadmin olsa bile sadece kendisininkini)
+              if (n.senderId === user.id) return true;
+              
+              // Alıcı öğrenciyse ve mesajı gönderen kendi öğretmeniyse görebilir
+              if (user.role === 'student') {
+                  const me = students.find(s => s.id === user.id);
+                  return me && me.teacherId === n.senderId;
+              }
+              // Başkasının sınıf duyurusunu kimse göremez (Süperadmin dahil)
+              return false;
+          }
+
+          // DİĞER STANDART KURALLAR
+          if (user.role === 'superadmin') return true; // Genel sistem mesajlarını görür
+          if (user.role === 'admin' && n.target === 'teachers') return true; 
+          if (user.role === 'student') {
+              if (n.target === 'students') return true; 
+              if (n.target === user.id) return true; 
+          }
+          return false;
+      });
+  }, [notifications, user, students]);
+
+  const hasUnread = myNotifications.length > 0 && (!myNotifications[0].readBy?.includes(user?.id));
 
   useEffect(() => {
     if ((user?.role === 'admin' || user?.role === 'superadmin') && myStudents.length > 0 && selectedStudentId === null) {
@@ -1994,44 +1574,38 @@ const MainApp = () => {
   const currentStudent = (user?.role === 'admin' || user?.role === 'superadmin') ? students.find(s => s.id === selectedStudentId) : students.find(s => s.id === user?.id);
 
   const updateStudentData = async (updated) => {
+    if(licenseInfo.isExpired && user.role === 'admin') return alert("Üyeliğinizin süresi dolmuştur.");
     if (isFirebaseActive) { 
-        try { 
-            const studentRef = doc(db, "students", updated.id); 
-            const { id, ...data } = updated; 
-            await setDoc(studentRef, data, { merge: true }); 
-        } catch (error) { console.error("Güncelleme hatası:", error); alert("Bağlantı hatası: Kayıt yapılamadı."); }
+        try { const { id, ...data } = updated; await setDoc(doc(db, "students", updated.id), data, { merge: true }); } 
+        catch (error) { console.error(error); alert("Bağlantı hatası."); }
     } else { setStudents(prev => prev.map(s => s.id === updated.id ? updated : s)); }
   };
 
   const handleUpdateProfile = async (updatedUser) => {
     setUser(updatedUser);
-    if (updatedUser.role === 'student') {
-        if(isFirebaseActive) { try { const ref = doc(db, "students", updatedUser.id); const { id, ...data } = updatedUser; await updateDoc(ref, data); } catch(e) { console.error(e); } } 
-        else { setStudents(prev => prev.map(s => s.id === updatedUser.id ? updatedUser : s)); }
-    } else {
-        if(isFirebaseActive) { try { const ref = doc(db, "admins", updatedUser.id); const { id, ...data } = updatedUser; await setDoc(ref, data, { merge: true }); } catch(e) { console.error(e); } } 
-        else { setAdmins(prev => prev.map(a => a.id === updatedUser.id ? updatedUser : a)); }
+    const collectionName = updatedUser.role === 'student' ? 'students' : 'admins';
+    if(isFirebaseActive) { const { id, ...data } = updatedUser; try { await setDoc(doc(db, collectionName, id), data, { merge: true }); } catch(e){} } 
+    else { 
+        if(updatedUser.role === 'student') setStudents(prev => prev.map(s => s.id === updatedUser.id ? updatedUser : s));
+        else setAdmins(prev => prev.map(a => a.id === updatedUser.id ? updatedUser : a));
     }
   };
 
   const handleInspectStudent = (studentId) => { setSelectedStudentId(studentId); setActiveTab('dashboard'); };
+  const handleLoginSuccess = (loggedInUser) => { setUser(loggedInUser); setViewMode('app'); };
   
-  // LOGIN FLOW CONTROL
-  const handleLoginSuccess = (loggedInUser) => {
-      setUser(loggedInUser);
-      setViewMode('app');
+  const markNotificationsRead = async () => {
+      if(myNotifications.length > 0 && isFirebaseActive) {
+          const lastNotif = myNotifications[0];
+          if(!lastNotif.readBy?.includes(user.id)) {
+              try { await updateDoc(doc(db, "notifications", lastNotif.id), { readBy: [...(lastNotif.readBy || []), user.id] }); } catch(e){}
+          }
+      }
+      setShowNotifModal(true);
   };
 
-  // EĞER KULLANICI YOKSA: Landing Page veya Login Screen Göster
-  if (!user) {
-      if (viewMode === 'landing') {
-          return <LandingPage onGoToLogin={() => setViewMode('login')} />;
-      } else {
-          return <LoginScreen onLogin={handleLoginSuccess} students={students} admins={admins} isFirebase={isFirebaseActive} isLoading={isLoading} />;
-      }
-  }
+  if (!user) return viewMode === 'landing' ? <LandingPage onGoToLogin={() => setViewMode('login')} /> : <LoginScreen onLogin={handleLoginSuccess} students={students} admins={admins} isFirebase={isFirebaseActive} isLoading={isLoading} />;
 
-  // MENÜ (Değişmedi)
   const MENU_ITEMS = [
     { id: 'dashboard', label: 'Ana Sayfa', icon: Layout, roles: ['superadmin', 'admin', 'student'] },
     { id: 'schedule', label: 'Program & Ödev', icon: Calendar, roles: ['superadmin', 'admin', 'student'] },
@@ -2045,75 +1619,48 @@ const MainApp = () => {
     { id: 'admin_panel', label: 'Yönetici Paneli', icon: Shield, roles: ['superadmin'] },
   ];
 
-  // MAIN LAYOUT (Değişmedi, sadece Dashboard ve LessonModule'a yeni prop'lar eklendi)
   return (
     <div className={`flex flex-col md:flex-row h-screen ${colors.bgMain} ${colors.text} overflow-hidden font-sans transition-colors duration-300`}>
-      <div className={`md:hidden ${colors.bgCard} p-4 flex justify-between items-center border-b ${colors.border} z-50`}>
-           <div className="flex items-center gap-2 text-orange-500 font-bold text-lg"><Users size={20}/><span>HMK Koçluk</span></div>
-           <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className={colors.text}>{isMobileMenuOpen ? <X /> : <Menu />}</button>
-      </div>
+      <div className={`md:hidden ${colors.bgCard} p-4 flex justify-between items-center border-b ${colors.border} z-50`}><div className="flex items-center gap-2 text-orange-500 font-bold text-lg"><Users size={20}/><span>HMK Koçluk</span></div><button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className={colors.text}>{isMobileMenuOpen ? <X /> : <Menu />}</button></div>
       {isMobileMenuOpen && (<div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setIsMobileMenuOpen(false)}></div>)}
       <aside className={`fixed inset-y-0 left-0 w-64 ${colors.bgCard} border-r ${colors.border} flex flex-col z-50 transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className={`p-6 border-b ${colors.border} flex flex-col gap-1`}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-orange-500 font-bold text-lg truncate"><Users /><span>{user.name.split(' ')[0]}</span></div>
-            <button onClick={() => setShowProfileModal(true)} className={`${colors.textSec} hover:text-orange-500 transition-colors`}><Settings size={18} /></button>
+            <div className="relative"><button onClick={markNotificationsRead} className={`${colors.textSec} hover:text-orange-500 transition-colors relative`}><MessageSquare size={18} />{hasUnread && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-slate-900"></span>}</button></div>
           </div>
           <div className={`text-xs ${colors.textSec} ml-8`}>{user.role === 'superadmin' ? 'Yönetici' : user.role === 'admin' ? 'Öğretmen' : 'Öğrenci'}</div>
+          {user.role === 'admin' && (<div className={`mt-2 text-[10px] px-2 py-1 rounded border flex justify-between items-center ${licenseInfo.isExpired ? 'bg-red-500/10 border-red-500/30 text-red-500' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-500'}`}><span>Kalan: <b>{licenseInfo.daysLeft} Gün</b></span><span>{licenseInfo.used}/{licenseInfo.limit} Öğr.</span></div>)}
         </div>
-        
-        {(user.role === 'admin' || user.role === 'superadmin') && (
-          <div className={`p-4 border-b ${colors.border}`}>
-            <label className={`block text-[10px] uppercase font-bold ${colors.textSec} mb-2`}>Benim Öğrencilerim</label>
-            <select className={`w-full ${colors.inputBg} ${colors.border} border rounded p-2 ${colors.text} text-sm outline-none focus:border-orange-500`} value={selectedStudentId || ''} onChange={e => setSelectedStudentId(e.target.value)}>
-              {myStudents.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              {myStudents.length === 0 && <option value="">Öğrenci Yok</option>}
-              {!myStudents.find(s => s.id === selectedStudentId) && selectedStudentId && <option value={selectedStudentId}>(İncelenen Öğrenci)</option>}
-            </select>
-          </div>
-        )}
-
+        {(user.role === 'admin' || user.role === 'superadmin') && (<div className={`p-4 border-b ${colors.border}`}><label className={`block text-[10px] uppercase font-bold ${colors.textSec} mb-2`}>Benim Öğrencilerim</label><select className={`w-full ${colors.inputBg} ${colors.border} border rounded p-2 ${colors.text} text-sm outline-none focus:border-orange-500`} value={selectedStudentId || ''} onChange={e => setSelectedStudentId(e.target.value)}>{myStudents.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}{myStudents.length === 0 && <option value="">Öğrenci Yok</option>}{!myStudents.find(s => s.id === selectedStudentId) && selectedStudentId && <option value={selectedStudentId}>(İncelenen Öğrenci)</option>}</select></div>)}
         <nav className="flex-1 overflow-y-auto px-4 space-y-1 mt-4 custom-scrollbar">{MENU_ITEMS.filter(item => item.roles.includes(user.role)).map(item => (<button key={item.id} onClick={() => { setActiveTab(item.id); setIsMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === item.id ? 'bg-orange-600 text-white shadow-lg shadow-orange-500/30' : `${colors.textSec} hover:${colors.text} hover:${colors.hoverBg}`}`}><item.icon size={18} /> <span className="text-sm font-medium">{item.label}</span></button>))}</nav>
-        <div className={`p-4 border-t ${colors.border} space-y-2`}>
-            <button onClick={toggleTheme} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl ${colors.textSec} hover:${colors.text} ${colors.hoverBg} transition-all`}>
-              {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />} 
-              <span className="text-sm font-medium">{theme === 'dark' ? 'Aydınlık Mod' : 'Karanlık Mod'}</span>
-            </button>
-            <button onClick={() => setShowProfileModal(true)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl ${colors.textSec} hover:${colors.text} ${colors.hoverBg} transition-all`}>
-              <User size={18} />
-              <span className="text-sm font-medium">Profilim</span>
-            </button>
-            <button onClick={() => { setUser(null); setViewMode('landing'); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl ${colors.textSec} hover:text-red-500 ${colors.hoverBg} transition-all`}><LogOut size={18} /> <span className="text-sm font-medium">Güvenli Çıkış</span></button>
-        </div>
+        <div className={`p-4 border-t ${colors.border} space-y-2`}><button onClick={toggleTheme} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl ${colors.textSec} hover:${colors.text} ${colors.hoverBg} transition-all`}>{theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />} <span className="text-sm font-medium">{theme === 'dark' ? 'Aydınlık Mod' : 'Karanlık Mod'}</span></button><button onClick={() => setShowProfileModal(true)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl ${colors.textSec} hover:${colors.text} ${colors.hoverBg} transition-all`}><User size={18} /><span className="text-sm font-medium">Profilim</span></button><button onClick={() => { setUser(null); setViewMode('landing'); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl ${colors.textSec} hover:text-red-500 ${colors.hoverBg} transition-all`}><LogOut size={18} /> <span className="text-sm font-medium">Güvenli Çıkış</span></button></div>
       </aside>
       <main className={`flex-1 ${colors.bgMain} overflow-y-auto p-4 md:p-8 relative w-full custom-scrollbar`}>
         {user.role === 'superadmin' && activeTab === 'admin_panel' ? (
-           <AdminManagementModule admins={admins} setAdmins={setAdmins} user={user} allStudents={students} onInspectStudent={handleInspectStudent} />
+           <AdminManagementModule admins={admins} setAdmins={setAdmins} user={user} allStudents={students} onInspectStudent={handleInspectStudent} notifications={notifications} setNotifications={setNotifications} />
         ) : (user.role === 'admin' || user.role === 'superadmin') && activeTab === 'dashboard' ? (
-           // GÜNCELLEME: Dashboard'a classes ve setClasses prop'ları eklendi
-           <DashboardModule user={user} students={myStudents} setStudents={setStudents} setSelectedStudentId={setSelectedStudentId} onUpdateStudent={updateStudentData} classes={classes} setClasses={setClasses} />
+           // DİKKAT: DashboardModule'e admins prop'u eklendi
+           <DashboardModule user={user} students={myStudents} setStudents={setStudents} setSelectedStudentId={setSelectedStudentId} onUpdateStudent={updateStudentData} classes={myClasses} setClasses={setClasses} licenseInfo={licenseInfo} admins={admins} />
         ) : !currentStudent ? <div className={`text-center mt-20 ${colors.textSec}`}>Lütfen işlem yapmak için bir öğrenci seçiniz veya öğrenci ekleyiniz.</div> : (
           <>
-            {activeTab === 'dashboard' && <DashboardModule user={user} students={myStudents} setStudents={setStudents} setSelectedStudentId={setSelectedStudentId} onUpdateStudent={updateStudentData} classes={classes} setClasses={setClasses} />}
-            {activeTab === 'schedule' && <ScheduleModule user={user} student={currentStudent} curriculum={curriculum} onUpdateStudent={updateStudentData} />}
-            {activeTab === 'goals' && <GoalsModule user={user} student={currentStudent} onUpdateStudent={updateStudentData} />}
+            {activeTab === 'dashboard' && <DashboardModule user={user} students={myStudents} setStudents={setStudents} setSelectedStudentId={setSelectedStudentId} onUpdateStudent={updateStudentData} classes={myClasses} setClasses={setClasses} licenseInfo={licenseInfo} admins={admins} />}
+            {activeTab === 'schedule' && <ScheduleModule user={user} student={currentStudent} onUpdateStudent={updateStudentData} students={myStudents} classes={myClasses} curriculum={curriculum} />}
+            {activeTab === 'goals' && <GoalsModule user={user} student={currentStudent} onUpdateStudent={updateStudentData} students={myStudents} classes={myClasses} />}
             {activeTab === 'resources' && <ResourceModule user={user} student={currentStudent} curriculum={curriculum} onUpdateStudent={updateStudentData} />}
-            
-            {/* GÜNCELLEME: LessonModule'a allStudents prop'u eklendi */}
-            {activeTab === 'lessons' && <LessonModule user={user} student={currentStudent} curriculum={curriculum} setCurriculum={setCurriculum} onUpdateStudent={updateStudentData} allStudents={students} />}
-            
+            {activeTab === 'lessons' && <LessonModule user={user} student={currentStudent} curriculum={curriculum} setCurriculum={setCurriculum} onUpdateStudent={updateStudentData} allStudents={myStudents} />}
             {activeTab === 'mood' && <MoodModule user={user} student={currentStudent} onUpdateStudent={updateStudentData} />}
-            {activeTab === 'exams' && <ExamModule user={user} student={currentStudent} onUpdateStudent={updateStudentData} />}
+            {activeTab === 'exams' && <ExamModule user={user} student={currentStudent} onUpdateStudent={updateStudentData} curriculum={curriculum} />}
             {activeTab === 'interviews' && <InterviewModule user={user} student={currentStudent} onUpdateStudent={updateStudentData} />}
             {activeTab === 'payment' && <PaymentModule user={user} student={currentStudent} onUpdateStudent={updateStudentData} />}
           </>
         )}
       </main>
       {showProfileModal && <ProfileSettingsModal user={user} onClose={() => setShowProfileModal(false)} onUpdate={handleUpdateProfile} />}
+      {showNotifModal && (<Modal title="Bildirimler" onClose={() => setShowNotifModal(false)}><div className="space-y-4 max-h-80 overflow-y-auto">{myNotifications.map(n => (<div key={n.id} className={`p-4 rounded border ${colors.border} ${colors.bgCard}`}><div className="flex justify-between items-start mb-2"><span className="text-xs font-bold text-orange-500">{n.sender}</span><span className={`text-[10px] ${colors.textSec}`}>{formatDate(n.date, true)}</span></div><p className={`text-sm ${colors.text}`}>{n.text}</p></div>))}{myNotifications.length === 0 && <div className={`text-center ${colors.textSec}`}>Henüz bildirim yok.</div>}</div></Modal>)}
     </div>
   );
 };
-// --- EN ALTA EKLENECEK KOD ---
 
 // MainApp bileşeni bittikten hemen sonra bunu ekle:
 export default function App() {
