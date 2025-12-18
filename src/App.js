@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, addDoc, updateDoc, doc, deleteDoc, onSnapshot, query, setDoc, getDoc } from "firebase/firestore";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 
 // --- FIREBASE ENTEGRASYONU ---
@@ -169,7 +170,7 @@ const formatDate = (dateString, includeTime = false) => {
   return `${d}.${m}.${y}`;
 };
 
-// --- GELİŞMİŞ GRAFİK BİLEŞENİ (TAMİR EDİLDİ: Netler Geri Geldi, X Ekseni Beyaz) ---
+//// --- GELİŞMİŞ GRAFİK BİLEŞENİ (DÜZELTİLDİ: X Ekseni Yazıları Kaldırıldı) ---
 const LineChart = ({ data, dataKey, labelKey, subLabelKey = null, color = "#f97316", height = 250, showDots = true, strokeWidth = 3, maxValue = null, fixedRange = false }) => {
   const colors = useThemeColors();
   const containerRef = useRef(null);
@@ -185,7 +186,7 @@ const LineChart = ({ data, dataKey, labelKey, subLabelKey = null, color = "#f973
   
   const calculatedMax = Math.max(...data.map(d => Number(d[dataKey]) || 0));
   const maxVal = fixedRange ? 100 : (maxValue || (calculatedMax * 1.15) || 10);
-  const padding = 30; 
+  const padding = 20; // Padding azaltıldı çünkü alt yazılar kalktı
   const effectiveHeight = height; 
 
   const points = data.map((d, i) => {
@@ -207,7 +208,7 @@ const LineChart = ({ data, dataKey, labelKey, subLabelKey = null, color = "#f973
           </linearGradient>
         </defs>
         
-        {/* Y EKSENİ (SADECE ÇİZGİLER - SAYILAR YOK) */}
+        {/* Y EKSENİ ÇİZGİLERİ */}
         {[0, 0.25, 0.5, 0.75, 1].map(p => { 
           const y = effectiveHeight - padding - (p * (effectiveHeight - 2*padding)); 
           return <line key={p} x1={padding} y1={y} x2={width-padding} y2={y} stroke={colors.chartGrid} strokeWidth="1" strokeDasharray="4" opacity="0.3" />;
@@ -221,19 +222,13 @@ const LineChart = ({ data, dataKey, labelKey, subLabelKey = null, color = "#f973
           return (
             <g key={i} className="group">
               {/* Nokta */}
-              <circle cx={x} cy={y} r="5" fill={colors.bgCard} stroke={color} strokeWidth="2" className="transition-all duration-300 group-hover:r-7 cursor-pointer" />
+              <circle cx={x} cy={y} r="4" fill={colors.bgCard} stroke={color} strokeWidth="2" className="transition-all duration-300 group-hover:r-6 cursor-pointer" />
               
-              {/* --- GERİ GETİRİLEN KISIM: NOKTA ÜZERİNDEKİ NET DEĞERİ --- */}
-              <text x={x} y={y - 12} textAnchor="middle" stroke={colors.bgCard} strokeWidth="3" fontSize="12" fontWeight="bold" paintOrder="stroke">{Number(d[dataKey]).toFixed(1)}</text>
-              <text x={x} y={y - 12} textAnchor="middle" fill={color} fontSize="12" fontWeight="bold">{Number(d[dataKey]).toFixed(1)}</text>
+              {/* Net Değeri (Noktanın üzerinde) */}
+              <text x={x} y={y - 10} textAnchor="middle" stroke={colors.bgCard} strokeWidth="3" fontSize="11" fontWeight="bold" paintOrder="stroke">{Number(d[dataKey]).toFixed(1)}</text>
+              <text x={x} y={y - 10} textAnchor="middle" fill={color} fontSize="11" fontWeight="bold">{Number(d[dataKey]).toFixed(1)}</text>
               
-              {/* X EKSENİ (TARİH) - RENK SABİTLENDİ (Karanlık modda beyaz görünmesi için) */}
-              <text x={x} y={effectiveHeight + 15} textAnchor="middle" fill={colors.isDark ? "#e2e8f0" : "#64748b"} fontSize="10" fontWeight="500">{d[labelKey]}</text>
-              
-              {/* DENEME ADI (Varsa, tarihin hemen altına, minimal) */}
-              {subLabelKey && d[subLabelKey] && (
-                  <text x={x} y={effectiveHeight + 28} textAnchor="middle" fill={colors.isDark ? "#94a3b8" : "#94a3b8"} fontSize="9" fontWeight="400" className="opacity-80">{d[subLabelKey].substring(0,8)}</text>
-              )}
+              {/* X EKSENİ YAZILARI VE DENEME İSİMLERİ KALDIRILDI */}
             </g>
           );
         })}
@@ -482,6 +477,187 @@ const AdminManagementModule = ({ admins, setAdmins, user, allStudents, onInspect
   );
 };
 
+// --- AI ASİSTAN (YAPAY ZEKA KOÇ) ---
+const AIAssistant = ({ user, students }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const messagesEndRef = useRef(null);
+  const colors = useThemeColors();
+
+  // API ANAHTARI BURAYA (Tırnak içine yapıştır)
+  // Güvenlik için .env dosyasında saklaman önerilir: process.env.REACT_APP_GEMINI_KEY
+  // Kodun içinden şifreyi siliyoruz, çevresel değişkenden almasını söylüyoruz
+const API_KEY = process.env.REACT_APP_GEMINI_KEY;
+
+  // Sohbet Geçmişini Yükle (Hafıza Özelliği)
+  useEffect(() => {
+    if (!user || !isFirebaseActive) return;
+    const loadHistory = async () => {
+      const docRef = doc(db, "ai_history", user.id);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        setMessages(docSnap.data().chat || []);
+      } else {
+        // İlk açılış mesajı
+        setMessages([{
+          role: "model",
+          text: `Merhaba Hocam! Ben senin yapay zeka asistanınım. Şu an ${students.length} öğrencinin verisine hakimim. Bana öğrencilerinin durumunu, analizlerini veya planlamalarını sorabilirsin.`
+        }]);
+      }
+    };
+    loadHistory();
+  }, [user, isFirebaseActive, students.length]);
+
+  // Otomatik Kaydırma
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isOpen]);
+
+  const handleSend = async () => {
+    if (!input.trim() || !API_KEY) return;
+    const userMessage = { role: "user", text: input };
+    setMessages((prev) => [...prev, userMessage]);
+    setInput("");
+    setIsLoading(true);
+
+    try {
+      // Öğrenci Verilerini Özetle (Yapay Zekaya Bağlam Kazandır)
+      const contextData = students.map(s => ({
+        name: s.name,
+        grade: s.grade,
+        target: s.target,
+        totalSolved: s.stats?.totalSolved || 0,
+        lastExam: s.exams?.[0] ? `${s.exams[0].name} (${s.exams[0].totalNet} Net)` : "Yok",
+        mood: s.moods?.[0] ? `Motivasyon: ${s.moods[0].metrics.motivation}` : "Bilinmiyor"
+      }));
+
+      const systemPrompt = `
+        Sen bir eğitim koçu asistanısın. Adın "Koçum AI".
+        Muhafazakar, samimi ve motive edici bir dil kullan.
+        Öğretmene "Hocam" diye hitap et.
+        Elinin altında şu öğrencilerin verileri var (JSON formatında): ${JSON.stringify(contextData)}.
+        Eğer kullanıcı belirli bir öğrenciyi sorarsa bu verileri kullanarak analiz yap.
+        Genel eğitim sorularına pedagojik ve bilimsel cevaplar ver.
+        Cevapların çok uzun olmasın, özet ve net olsun.
+      `;
+
+      // Gemini Modelini Başlat
+      const genAI = new GoogleGenerativeAI(API_KEY);
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+      // Sohbet Geçmişini Hazırla (Gemini Formatına Uygun)
+      const chatHistory = messages.map(m => ({
+        role: m.role === 'user' ? 'user' : 'model',
+        parts: [{ text: m.text }]
+      }));
+
+      // Sohbeti Başlat
+      const chat = model.startChat({
+        history: [
+            { role: "user", parts: [{ text: systemPrompt }] }, // Sistem talimatını ilk mesaj gibi gizlice veriyoruz
+            { role: "model", parts: [{ text: "Anlaşıldı hocam, hazırım." }] },
+            ...chatHistory
+        ],
+      });
+
+      const result = await chat.sendMessage(input);
+      const response = result.response;
+      const text = response.text();
+
+      const aiMessage = { role: "model", text: text };
+      const updatedMessages = [...messages, userMessage, aiMessage];
+      
+      setMessages(updatedMessages);
+
+      // Geçmişi Firebase'e Kaydet (Hafıza)
+      if (isFirebaseActive) {
+        await setDoc(doc(db, "ai_history", user.id), { chat: updatedMessages });
+      }
+
+    } catch (error) {
+      console.error("AI Hatası:", error);
+      setMessages((prev) => [...prev, { role: "model", text: "Üzgünüm hocam, şu an bağlantıda bir sorun var. API anahtarını veya interneti kontrol eder misin?" }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Sadece Admin/Öğretmen görebilir
+  if (user.role === 'student') return null;
+
+  return (
+    <>
+      {/* Floating Button (Minimal Simge) */}
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className={`fixed bottom-6 right-6 z-[100] w-14 h-14 rounded-full shadow-2xl flex items-center justify-center transition-all hover:scale-110 ${isOpen ? 'bg-red-500 rotate-90' : 'bg-gradient-to-r from-orange-600 to-pink-600'} text-white border-2 border-white`}
+      >
+        {isOpen ? <X size={24} /> : <Zap size={28} fill="currentColor" />}
+      </button>
+
+      {/* Chat Penceresi */}
+      {isOpen && (
+        <div className={`fixed bottom-24 right-6 z-[100] w-full max-w-sm md:w-96 h-[500px] ${colors.bgCard} border ${colors.border} rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-fade-in`}>
+          {/* Header */}
+          <div className="bg-gradient-to-r from-orange-600 to-pink-600 p-4 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-white">
+              <div className="w-8 h-8 bg-white/20 rounded-full flex items-center justify-center"><Zap size={18} fill="currentColor"/></div>
+              <div>
+                <h3 className="font-bold text-sm">Koçum AI</h3>
+                <span className="text-[10px] opacity-80 block">Öğrenci Analiz Asistanı</span>
+              </div>
+            </div>
+            <button onClick={() => {setMessages([]); if(isFirebaseActive) deleteDoc(doc(db, "ai_history", user.id));}} className="text-white/70 hover:text-white" title="Hafızayı Temizle"><Trash2 size={16}/></button>
+          </div>
+
+          {/* Mesaj Alanı */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar bg-slate-50/5 dark:bg-black/20">
+            {messages.map((m, idx) => (
+              <div key={idx} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[85%] p-3 rounded-2xl text-xs md:text-sm leading-relaxed ${m.role === 'user' ? 'bg-orange-600 text-white rounded-br-none' : `${colors.isDark ? 'bg-slate-800' : 'bg-slate-200'} ${colors.text} rounded-bl-none`}`}>
+                  {/* Basit Markdown temizliği ve satır başları */}
+                  {m.text.split('\n').map((line, i) => <p key={i} className="mb-1">{line}</p>)}
+                </div>
+              </div>
+            ))}
+            {isLoading && (
+              <div className="flex justify-start">
+                <div className={`${colors.isDark ? 'bg-slate-800' : 'bg-slate-200'} p-3 rounded-2xl rounded-bl-none flex gap-1`}>
+                  <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
+                  <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce delay-75"></div>
+                  <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce delay-150"></div>
+                </div>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Input Alanı */}
+          <div className={`p-3 border-t ${colors.border} flex gap-2 ${colors.bgCard}`}>
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+              placeholder="Bir şeyler sor... (Örn: Ahmet'in netleri nasıl?)"
+              className={`flex-1 ${colors.inputBg} border ${colors.inputBorder} rounded-full px-4 py-2 text-sm focus:outline-none focus:border-orange-500 transition-colors ${colors.text}`}
+            />
+            <button 
+                onClick={handleSend} 
+                disabled={isLoading || !input.trim()}
+                className="bg-orange-600 hover:bg-orange-700 text-white p-2.5 rounded-full disabled:opacity-50 transition-transform hover:scale-105 active:scale-95"
+            >
+              <ArrowUp size={18} />
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
 // 0. DASHBOARD (GÜNCELLENMİŞ: Seçim İkonu & Mobil Menü)
 const DashboardModule = ({ user, students, setStudents, setSelectedStudentId, onUpdateStudent, classes, setClasses, licenseInfo, admins, setIsMobileMenuOpen, selectedStudentId }) => {
   const [showModal, setShowModal] = useState(false);
@@ -621,7 +797,7 @@ const DashboardModule = ({ user, students, setStudents, setSelectedStudentId, on
   );
 };
 
-// 1. DERS YÖNETİMİ (GÜNCELLENMİŞ: Tablet Uyumlu & Kopyalama Düzeltildi)
+//// 1. DERS YÖNETİMİ (Sözdizimi Hatası Giderildi)
 const LessonModule = ({ student, curriculum, setCurriculum, onUpdateStudent, user, allStudents }) => {
   const activeCurriculum = student.curriculum || curriculum;
   const [selectedCourseId, setSelectedCourseId] = useState(activeCurriculum[0]?.id || null);
@@ -636,7 +812,6 @@ const LessonModule = ({ student, curriculum, setCurriculum, onUpdateStudent, use
 
   const selectedCourse = activeCurriculum.find(c => c.id === selectedCourseId);
 
-  // Eski fonksiyonlar (kısaltıldı)
   const toggleStatus = (topicId, type) => { const currentStatus = student.lessons[topicId] || {}; const newStatus = { ...currentStatus, [type]: !currentStatus[type] }; onUpdateStudent({ ...student, lessons: { ...student.lessons, [topicId]: newStatus } }); };
   const handleAddItem = () => { let updatedCurriculum = [...activeCurriculum]; if (showAddModal === 'course') { if(!newItem.name) return; const newCourse = { id: Date.now().toString(), name: newItem.name, units: [] }; updatedCurriculum = [...updatedCurriculum, newCourse]; setSelectedCourseId(newCourse.id); } else if (showAddModal === 'unit' || showAddModal === 'topic') { const names = bulkText ? bulkText.split('\n').filter(n => n.trim()) : (newItem.name ? [newItem.name] : []); if(names.length === 0) return; updatedCurriculum = updatedCurriculum.map(c => { if (c.id === selectedCourseId) { if (showAddModal === 'unit') { const newUnits = names.map(name => ({ id: Math.random().toString(36).substr(2, 9), name, topics: [] })); return { ...c, units: [...c.units, ...newUnits] }; } else { return { ...c, units: c.units.map(u => u.id === newItem.parentId ? { ...u, topics: [...u.topics, ...names] } : u) }; } } return c; }); } onUpdateStudent({ ...student, curriculum: updatedCurriculum }); setShowAddModal(null); setNewItem({ name: "", parentId: "" }); setBulkText(""); };
   const handleMove = (e, type, index, direction, parentId = null, subParentId = null) => { e.stopPropagation(); let updated = [...activeCurriculum]; const swap = (arr, i, dir) => { if (dir === 'up' && i > 0) { [arr[i], arr[i - 1]] = [arr[i - 1], arr[i]]; } else if (dir === 'down' && i < arr.length - 1) { [arr[i], arr[i + 1]] = [arr[i + 1], arr[i]]; } return arr; }; if (type === 'course') { updated = swap(updated, index, direction); } else if (type === 'unit') { const courseIndex = updated.findIndex(c => c.id === selectedCourseId); if (courseIndex > -1) { let units = [...updated[courseIndex].units]; units = swap(units, index, direction); updated[courseIndex] = { ...updated[courseIndex], units }; } } else if (type === 'topic') { const courseIndex = updated.findIndex(c => c.id === selectedCourseId); if (courseIndex > -1) { const unitIndex = updated[courseIndex].units.findIndex(u => u.id === parentId); if (unitIndex > -1) { let topics = [...updated[courseIndex].units[unitIndex].topics]; topics = swap(topics, index, direction); const newUnits = [...updated[courseIndex].units]; newUnits[unitIndex] = { ...newUnits[unitIndex], topics }; updated[courseIndex] = { ...updated[courseIndex], units: newUnits }; } } } onUpdateStudent({ ...student, curriculum: updated }); };
@@ -655,7 +830,6 @@ const LessonModule = ({ student, curriculum, setCurriculum, onUpdateStudent, use
   };
 
   return (
-    // LG BREAKPOINT (Tablet için dikey, PC için yatay)
     <div className="flex flex-col lg:flex-row gap-6 h-auto lg:h-[calc(100vh-140px)] animate-fade-in">
         <div className="w-full lg:w-1/4 flex flex-col gap-2 max-h-60 lg:max-h-full overflow-y-auto pr-2 custom-scrollbar">
             <div className="flex justify-between items-center mb-2"><h3 className="text-orange-500 font-bold">Dersler</h3><div className="flex gap-1"><Button size="small" variant="secondary" icon={RefreshCw} onClick={() => setShowCopyModal(true)} title="Kopyala" /><Button size="small" icon={Plus} onClick={() => setShowAddModal('course')} /></div></div>
@@ -672,7 +846,7 @@ const LessonModule = ({ student, curriculum, setCurriculum, onUpdateStudent, use
   );
 };
 
-// 2. HAFTALIK PROGRAM (DÜZELTİLDİ: Arşivleme & Izgara Görünümü)
+// 2. HAFTALIK PROGRAM (DÜZELTİLDİ: Laptop Görünümü, ID Çakışması, Arşiv İsmi)
 const ScheduleModule = ({ student, curriculum, onUpdateStudent, user, students, classes }) => {
   const activeCurriculum = student.curriculum || curriculum;
   const [form, setForm] = useState({ days: [], courseId: '', unitId: '', topic: '', type: 'soru', count: '', source: '', note: '' });
@@ -701,13 +875,24 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user, students, 
   const handleAssign = async () => { 
       if(!form.courseId || !form.topic) return alert("Lütfen ders ve konu seçiniz."); 
       if(form.days.length === 0) return alert("En az bir gün seçiniz.");
+      
       const assignmentsToAdd = [];
-      form.days.forEach(day => { assignmentsToAdd.push({ id: Date.now() + Math.random(), status: 'pending', subject: selectedCourse.name, ...form, day }); });
+      // ID ÇAKIŞMA ÇÖZÜMÜ: index ekleyerek benzersizlik sağlandı
+      form.days.forEach((day, index) => { 
+          assignmentsToAdd.push({ 
+              id: Date.now() + Math.random() + index, 
+              status: 'pending', 
+              subject: selectedCourse.name, 
+              ...form, 
+              day 
+          }); 
+      });
+
       if (assignToClass && selectedClassId) {
           if(!window.confirm(`Bu ödev sınıftaki tüm öğrencilere eklenecek.`)) return;
           const classStudents = students.filter(s => s.classId === selectedClassId);
           for (const s of classStudents) {
-              const sAssignments = assignmentsToAdd.map(a => ({...a, id: Date.now() + Math.random()}));
+              const sAssignments = assignmentsToAdd.map((a, i) => ({...a, id: Date.now() + Math.random() + i}));
               if(isFirebaseActive) { await setDoc(doc(db, "students", s.id), { assignments: [...(s.assignments || []), ...sAssignments] }, { merge: true }); } 
               else { assignToStudent(s, sAssignments); }
           }
@@ -723,12 +908,24 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user, students, 
   const handleQuickAssign = async () => {
     if(!quickForm.text) return alert("Görev giriniz."); if(quickForm.days.length === 0) return alert("Gün seçiniz.");
     const assignmentsToAdd = [];
-    quickForm.days.forEach(day => { assignmentsToAdd.push({ id: Date.now() + Math.random(), status: 'pending', subject: 'Ek Görev', topic: quickForm.text, day, type: 'ozel', count: quickForm.count, source: quickForm.source }); });
+    quickForm.days.forEach((day, index) => { 
+        assignmentsToAdd.push({ 
+            id: Date.now() + Math.random() + index, 
+            status: 'pending', 
+            subject: 'Ek Görev', 
+            topic: quickForm.text, 
+            day, 
+            type: 'ozel', 
+            count: quickForm.count, 
+            source: quickForm.source 
+        }); 
+    });
+    
     if (assignToClass && selectedClassId) {
         if(!window.confirm(`Toplu atama yapılsın mı?`)) return;
         const classStudents = students.filter(s => s.classId === selectedClassId);
         for (const s of classStudents) {
-            const sAssignments = assignmentsToAdd.map(a => ({...a, id: Date.now() + Math.random()}));
+            const sAssignments = assignmentsToAdd.map((a, i) => ({...a, id: Date.now() + Math.random() + i}));
             if(isFirebaseActive) await setDoc(doc(db, "students", s.id), { assignments: [...(s.assignments || []), ...sAssignments] }, { merge: true });
             else assignToStudent(s, sAssignments);
         }
@@ -743,13 +940,23 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user, students, 
   const confirmDelete = () => { if (deleteConfirm) { const filtered = assignments.filter(a => a.id !== deleteConfirm); onUpdateStudent({ ...student, assignments: filtered }); setDeleteConfirm(null); } };
   const handleDeleteArchive = (weekId) => { if(window.confirm("Arşiv silinsin mi?")) { const updatedArchives = student.pastWeeks.filter(w => w.id !== weekId); onUpdateStudent({ ...student, pastWeeks: updatedArchives }); } };
   
-  // --- ARŞİVLEME MANTIĞI (DÜZELTİLDİ) ---
+  // --- ARŞİVLEME VE İSİM GİRME ---
   const handleResetSchedule = () => { 
+      const weekName = prompt("Arşivlenecek hafta için bir isim giriniz:", `${new Date().toLocaleDateString('tr-TR')} Haftası`);
+      if (!weekName) return; 
+
       if(window.confirm("Program arşive alınıp sıfırlansın mı?")) { 
           const newTotalSolved = (student.stats?.totalSolved || 0) + weeklySolvedQuestions; 
           const newMonthlySolved = (student.stats?.monthlySolved || 0) + weeklySolvedQuestions; 
-          // Mevcut assignment listesini KOPYALAYARAK arşive atıyoruz
-          const archivedWeek = { id: Date.now(), date: new Date().toLocaleDateString('tr-TR'), assignments: [...assignments], solvedCount: weeklySolvedQuestions }; 
+          
+          const archivedWeek = { 
+              id: Date.now(), 
+              name: weekName,
+              date: new Date().toLocaleDateString('tr-TR'), 
+              assignments: [...assignments], 
+              solvedCount: weeklySolvedQuestions 
+          }; 
+          
           onUpdateStudent({ ...student, assignments: [], pastWeeks: [archivedWeek, ...(student.pastWeeks || [])], stats: { ...student.stats, totalSolved: newTotalSolved, monthlySolved: newMonthlySolved } }); 
       } 
   };
@@ -760,7 +967,15 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user, students, 
 
   return (
     <div className="space-y-8 animate-fade-in">
-      <div className="flex justify-between items-center"><h2 className={`text-2xl font-bold ${colors.text}`}>Haftalık Planlama</h2><div className="flex gap-2">{isAdmin && <Button variant="ghost" onClick={() => setIsEditMode(!isEditMode)} icon={Settings} className={isEditMode ? 'text-orange-500 bg-orange-500/10' : ''} />}{isAdmin && <Button size="small" icon={Zap} onClick={() => setShowQuickModal(true)}>Hızlı Görev</Button>}{isAdmin && <Button variant="danger" size="small" icon={RefreshCw} onClick={handleResetSchedule}>Arşivle & Sıfırla</Button>}</div></div>
+      <div className="flex justify-between items-center">
+        <h2 className={`text-2xl font-bold ${colors.text}`}>Haftalık Planlama</h2>
+        <div className="flex gap-2">
+            {isAdmin && <Button variant="ghost" onClick={() => setIsEditMode(!isEditMode)} icon={Settings} className={isEditMode ? 'text-orange-500 bg-orange-500/10' : ''} />}
+            {isAdmin && <Button size="small" icon={Zap} onClick={() => setShowQuickModal(true)}>Hızlı Görev</Button>}
+            {isAdmin && <Button variant="danger" size="small" icon={RefreshCw} onClick={handleResetSchedule}>Arşivle & Sıfırla</Button>}
+        </div>
+      </div>
+      
       {isAdmin && (
         <Card title={editingId ? "Ödevi Düzenle" : "Detaylı Ödev Atama"} className={`${colors.isDark ? 'bg-slate-800/50' : 'bg-white'}`}>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
@@ -780,14 +995,47 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user, students, 
         </Card>
       )}
       
-      <div className="flex overflow-x-auto gap-4 pb-4 xl:grid xl:grid-cols-7 xl:overflow-visible snap-x">
-          {DAYS.map(day => { const dayTasks = assignments.filter(a => a.day === day.id); const stats = getDailyStats(day.id); return (<div key={day.id} className={`min-w-[280px] md:min-w-[300px] xl:min-w-0 ${colors.bgCardTransparent} border ${colors.border} rounded-xl flex flex-col h-full snap-center`}><div className={`p-3 border-b ${colors.border} ${colors.bgCard} rounded-t-xl text-center`}><span className={`font-bold ${colors.text} text-sm`}>{day.label}</span><span className={`block text-xs ${colors.textSec}`}>{dayTasks.length} Görev</span></div><div className="p-2 space-y-2 flex-1">{dayTasks.map(task => (<div key={task.id} className={`p-3 rounded-lg border text-xs group relative ${colors.shadow} ${task.status === 'completed' ? 'bg-emerald-900/20 border-emerald-900/50 opacity-75' : `${colors.bgCard} ${colors.border}`}`}><div className="flex justify-between items-start"><span className="font-bold text-orange-400 truncate w-full pr-12">{task.subject}</span>{(isAdmin && isEditMode) && (<div className={`flex gap-1 absolute right-2 top-2 z-10 ${colors.isDark ? 'bg-slate-800/80' : 'bg-white/80'} p-1 rounded backdrop-blur-sm shadow-sm border ${colors.border}`}><button onClick={(e) => {e.stopPropagation(); handleEdit(task)}} className={`text-slate-400 hover:text-blue-400 p-2`}><Edit2 size={12}/></button><button onClick={(e) => requestDelete(e, task.id)} className="text-slate-400 hover:text-red-500 p-2"><Trash2 size={12}/></button></div>)}</div><div className={`${colors.text} mt-1 text-sm font-medium line-clamp-2`}>{task.topic}</div><div className="mt-2 flex flex-col gap-1"><div className={`flex justify-between items-center text-xs ${colors.textSec}`}><span className={`${colors.isDark ? 'bg-slate-700/50' : 'bg-slate-200'} px-1.5 py-0.5 rounded`}>{TASK_TYPES.find(t=>t.id === task.type)?.label}</span>{task.count && <span className="font-bold text-orange-400">{task.count} Soru</span>}</div>{task.source && (<div className="flex items-center gap-1 text-xs text-blue-400 mt-0.5"><Book size={10} /><span className="truncate">{task.source}</span></div>)}</div>{task.note && (<div className={`mt-2 pt-2 border-t ${colors.border} text-[10px] ${colors.textSec} italic`}>Not: <span className={colors.text}>{task.note}</span></div>)}<button onClick={() => toggleTaskStatus(task.id)} className={`mt-2 w-full py-2 rounded flex items-center justify-center gap-1 ${task.status === 'completed' ? 'bg-emerald-600 text-white' : `${colors.isDark ? 'bg-slate-700 text-slate-400 hover:bg-slate-600' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'}`}`}>{task.status === 'completed' ? <Check size={14}/> : 'Tamamla'}</button></div>))}{dayTasks.length === 0 && <div className={`text-center py-8 ${colors.textSec} text-xs`}>Boş Gün</div>}</div><div className={`p-3 ${colors.isDark ? 'bg-slate-900/80' : 'bg-white/80'} border-t ${colors.border} rounded-b-xl text-[10px] space-y-1`}><div className={`flex justify-between ${colors.textSec}`}><span>Konu:</span> <span className={`${colors.text} font-bold`}>{stats.topic}</span></div><div className={`flex justify-between ${colors.textSec}`}><span>Soru:</span> <span className="text-orange-400 font-bold">{stats.question}</span></div><div className={`flex justify-between ${colors.textSec}`}><span>Tekrar:</span> <span className={`${colors.text} font-bold`}>{stats.repeat}</span></div><div className={`flex justify-between ${colors.textSec}`}><span>Deneme:</span> <span className={`${colors.text} font-bold`}>{stats.exam}</span></div></div></div>)})}
+      {/* LAPTOP İÇİN DÜZELTME: Grid Yapısı */}
+      <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7 gap-4`}>
+          {DAYS.map(day => { 
+              const dayTasks = assignments.filter(a => a.day === day.id); 
+              const stats = getDailyStats(day.id); 
+              return (
+                <div key={day.id} className={`${colors.bgCardTransparent} border ${colors.border} rounded-xl flex flex-col h-full min-h-[300px]`}>
+                    <div className={`p-3 border-b ${colors.border} ${colors.bgCard} rounded-t-xl text-center`}><span className={`font-bold ${colors.text} text-sm`}>{day.label}</span><span className={`block text-xs ${colors.textSec}`}>{dayTasks.length} Görev</span></div>
+                    <div className="p-2 space-y-2 flex-1">
+                        {dayTasks.map(task => (
+                            <div key={task.id} className={`p-3 rounded-lg border text-xs group relative ${colors.shadow} ${task.status === 'completed' ? 'bg-emerald-900/20 border-emerald-900/50 opacity-75' : `${colors.bgCard} ${colors.border}`}`}>
+                                <div className="flex justify-between items-start">
+                                    <span className="font-bold text-orange-400 truncate w-full pr-12">{task.subject}</span>
+                                    {(isAdmin && isEditMode) && (<div className={`flex gap-1 absolute right-2 top-2 z-10 ${colors.isDark ? 'bg-slate-800/80' : 'bg-white/80'} p-1 rounded backdrop-blur-sm shadow-sm border ${colors.border}`}><button onClick={(e) => {e.stopPropagation(); handleEdit(task)}} className={`text-slate-400 hover:text-blue-400 p-2`}><Edit2 size={12}/></button><button onClick={(e) => requestDelete(e, task.id)} className="text-slate-400 hover:text-red-500 p-2"><Trash2 size={12}/></button></div>)}
+                                </div>
+                                <div className={`${colors.text} mt-1 text-sm font-medium line-clamp-2`}>{task.topic}</div>
+                                <div className="mt-2 flex flex-col gap-1">
+                                    <div className={`flex justify-between items-center text-xs ${colors.textSec}`}><span className={`${colors.isDark ? 'bg-slate-700/50' : 'bg-slate-200'} px-1.5 py-0.5 rounded`}>{TASK_TYPES.find(t=>t.id === task.type)?.label}</span>{task.count && <span className="font-bold text-orange-400">{task.count} Soru</span>}</div>
+                                    {task.source && (<div className="flex items-center gap-1 text-xs text-blue-400 mt-0.5"><Book size={10} /><span className="truncate">{task.source}</span></div>)}
+                                </div>
+                                {task.note && (<div className={`mt-2 pt-2 border-t ${colors.border} text-[10px] ${colors.textSec} italic`}>Not: <span className={colors.text}>{task.note}</span></div>)}
+                                <button onClick={() => toggleTaskStatus(task.id)} className={`mt-2 w-full py-2 rounded flex items-center justify-center gap-1 ${task.status === 'completed' ? 'bg-emerald-600 text-white' : `${colors.isDark ? 'bg-slate-700 text-slate-400 hover:bg-slate-600' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'}`}`}>{task.status === 'completed' ? <Check size={14}/> : 'Tamamla'}</button>
+                            </div>
+                        ))}
+                        {dayTasks.length === 0 && <div className={`text-center py-8 ${colors.textSec} text-xs`}>Boş Gün</div>}
+                    </div>
+                    <div className={`p-3 ${colors.isDark ? 'bg-slate-900/80' : 'bg-white/80'} border-t ${colors.border} rounded-b-xl text-[10px] space-y-1`}>
+                        <div className={`flex justify-between ${colors.textSec}`}><span>Konu:</span> <span className={`${colors.text} font-bold`}>{stats.topic}</span></div>
+                        <div className={`flex justify-between ${colors.textSec}`}><span>Soru:</span> <span className="text-orange-400 font-bold">{stats.question}</span></div>
+                        <div className={`flex justify-between ${colors.textSec}`}><span>Tekrar:</span> <span className={`${colors.text} font-bold`}>{stats.repeat}</span></div>
+                        <div className={`flex justify-between ${colors.textSec}`}><span>Deneme:</span> <span className={`${colors.text} font-bold`}>{stats.exam}</span></div>
+                    </div>
+                </div>
+              )
+          })}
       </div>
+      
       {showQuickModal && (<Modal title="Hızlı Görev" onClose={() => setShowQuickModal(false)}><div className="space-y-4"><Input label="Görev" value={quickForm.text} onChange={e => setQuickForm({...quickForm, text: e.target.value})} /><div className="grid grid-cols-2 gap-4"><Input label="Soru" type="number" value={quickForm.count} onChange={e => setQuickForm({...quickForm, count: e.target.value})} /><Input label="Kaynak" value={quickForm.source} onChange={e => setQuickForm({...quickForm, source: e.target.value})} /></div><div><label className="text-xs font-bold text-slate-500 mb-1 block">Günler</label><DaySelector selectedDays={quickForm.days} onChange={days => setQuickForm({...quickForm, days})} /></div><div className="flex items-center gap-2 pt-2"><input type="checkbox" checked={assignToClass} onChange={e => setAssignToClass(e.target.checked)} className="w-4 h-4 accent-orange-500" /><span className={`text-sm ${colors.text}`}>Tüm Sınıfa Ata</span>{assignToClass && <select className={`text-xs ${colors.inputBg} border ${colors.inputBorder} rounded p-1`} value={selectedClassId} onChange={e => setSelectedClassId(e.target.value)}>{classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>}</div><Button className="w-full mt-2" onClick={handleQuickAssign}>Ata</Button></div></Modal>)}
       
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mt-8"><Card className={`border-l-4 border-l-blue-500 ${colors.bgCard}`}><div className="flex items-center gap-3 mb-2"><div className="p-2 bg-blue-500/20 rounded-lg text-blue-500"><Zap size={20}/></div><span className={`text-xs uppercase font-bold ${colors.textSec}`}>Haftalık Performans</span></div><div className="flex justify-between items-end"><div><div className={`text-2xl font-bold ${colors.text}`}>{weeklySolvedQuestions} <span className={`text-sm font-normal ${colors.textSec}`}>Soru</span></div></div><div className="text-right"><div className="text-xl font-bold text-blue-400">%{completionRate}</div><div className={`text-[10px] ${colors.textSec}`}>Tamamlanma</div></div></div></Card></div>
       
-      {/* ARŞİV İÇİN YATAY GRID DÜZENİ (ATTIĞINIZ GÖRSELDEKİ GİBİ) */}
       {student.pastWeeks?.length > 0 && (
         <Card title="Geçmiş Haftalar Arşivi" className="mt-8">
             <div className="space-y-4">
@@ -796,7 +1044,10 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user, students, 
                         <div className="p-4 flex justify-between items-center cursor-pointer" onClick={() => setExpandedArchive(expandedArchive === week.id ? null : week.id)}>
                             <div className="flex items-center gap-3">
                                 {expandedArchive === week.id ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
-                                <div><div className={`font-bold ${colors.text} text-sm`}>Hafta: {week.date}</div><div className={`text-xs ${colors.textSec}`}>{week.assignments?.length || 0} Görev Planlandı</div></div>
+                                <div>
+                                    <div className={`font-bold ${colors.text} text-sm`}>{week.name || `Hafta: ${week.date}`}</div>
+                                    <div className={`text-xs ${colors.textSec}`}>{week.assignments?.length || 0} Görev | {week.date}</div>
+                                </div>
                             </div>
                             <div className="text-right flex items-center gap-4"><div className="text-orange-400 font-bold">{week.solvedCount} Soru Çözüldü</div>{isAdmin && (<button onClick={(e) => { e.stopPropagation(); handleDeleteArchive(week.id); }} className="text-red-500 hover:bg-red-500/10 p-2 rounded transition-colors"><Trash2 size={16}/></button>)}</div>
                         </div>
@@ -926,7 +1177,7 @@ const ResourceModule = ({ student, curriculum, onUpdateStudent, user }) => {
   );
 };
 
-// 5. GELİŞMİŞ DENEME TAKİBİ (DÜZELTİLDİ: Alt Grafikler Detaylandırıldı, Yan Menü Kaldırıldı)
+// 5. GELİŞMİŞ DENEME TAKİBİ (DÜZELTİLDİ: Netler 2 Basamaklı Hassas Gösterim)
 const ExamModule = ({ student, onUpdateStudent, user, curriculum }) => { 
   const [view, setView] = useState('list');
   const [filterType, setFilterType] = useState('TYT'); 
@@ -956,8 +1207,31 @@ const ExamModule = ({ student, onUpdateStudent, user, curriculum }) => {
 
   const handleSave = () => { 
       if(!formData.name) return alert("Deneme adı giriniz."); 
-      let totalNet = 0; const processedDetails = {}; 
-      Object.keys(formData.details).forEach(key => { const { d, y } = formData.details[key]; const net = Math.max(0, parseFloat(d||0) - parseFloat(y||0)/(examType==='LGS'?3:4)); processedDetails[key] = { d, y, n: net }; totalNet += net; });
+      let totalNet = 0; 
+      const processedDetails = {}; 
+      
+      const wrongCoef = examType === 'LGS' ? 3 : 4;
+
+      if (examType === 'BRANS') {
+          const key = formData.branchSubject;
+          const dVal = formData.details[key]?.d ? parseFloat(formData.details[key].d) : 0;
+          const yVal = formData.details[key]?.y ? parseFloat(formData.details[key].y) : 0;
+          const net = Math.max(0, dVal - (yVal / wrongCoef));
+          processedDetails[key] = { d: dVal, y: yVal, n: net };
+          totalNet = net;
+      } else {
+          if (EXAM_TYPES[examType]) {
+              Object.keys(formData.details).forEach(key => { 
+                  const detail = formData.details[key];
+                  const dVal = detail?.d ? parseFloat(detail.d) : 0;
+                  const yVal = detail?.y ? parseFloat(detail.y) : 0;
+                  const net = Math.max(0, dVal - (yVal / wrongCoef)); 
+                  processedDetails[key] = { d: dVal, y: yVal, n: net }; 
+                  totalNet += net; 
+              });
+          }
+      }
+      
       const examData = { type: examType, subject: examType==='BRANS'?formData.branchSubject:null, ...formData, totalNet, details: processedDetails };
       
       if (editingId) onUpdateStudent({ ...student, exams: student.exams.map(e => e.id === editingId ? { ...e, ...examData } : e) });
@@ -965,10 +1239,38 @@ const ExamModule = ({ student, onUpdateStudent, user, curriculum }) => {
       setView('list'); setEditingId(null);
   };
 
-  const handleEdit = (exam) => { setEditingId(exam.id); setExamType(exam.type==='BRANS'?'BRANS':exam.type); if(exam.type==='BRANS') setBranchFilter(exam.subject); setFormData({ name: exam.name, date: exam.date, difficulty: exam.difficulty, stats: exam.stats, details: exam.details, branchSubject: exam.subject, duration: exam.duration, wrongTopics: exam.wrongTopics || [] }); setView('add'); };
-  const updateDetail = (key, field, value) => setFormData(prev => ({ ...prev, details: { ...prev.details, [key]: { ...prev.details[key], [field]: value } } }));
+  const handleEdit = (exam) => { 
+      setEditingId(exam.id); 
+      setExamType(exam.type); 
+      if(exam.type==='BRANS') setBranchFilter(exam.subject); 
+      
+      setFormData({ 
+          name: exam.name, 
+          date: exam.date, 
+          difficulty: exam.difficulty, 
+          stats: exam.stats || { turkey: { rank: '', total: '' }, city: { rank: '', total: '' }, school: { rank: '', total: '' } }, 
+          details: exam.details || {}, 
+          branchSubject: exam.subject || 'mat', 
+          duration: exam.duration || '', 
+          wrongTopics: exam.wrongTopics || [] 
+      }); 
+      setView('add'); 
+  };
+
+  const updateDetail = (key, field, value) => {
+      setFormData(prev => ({ ...prev, details: { ...prev.details, [key]: { ...prev.details[key], [field]: value } } }));
+  };
+  
   const updateStat = (scope, field, value) => setFormData(prev => ({ ...prev, stats: { ...prev.stats, [scope]: { ...prev.stats[scope], [field]: value } } }));
   const confirmDelete = () => { if (deleteConfirm) { onUpdateStudent({ ...student, exams: student.exams.filter(e => e.id !== deleteConfirm) }); setDeleteConfirm(null); } };
+
+  const handleAddNew = () => {
+      setView('add');
+      setEditingId(null);
+      const typeToUse = filterType === 'ALL' ? 'TYT' : filterType;
+      setExamType(typeToUse);
+      setFormData({ name: "", date: new Date().toISOString().split('T')[0], difficulty: "Orta", stats: { turkey: { rank: '', total: '' }, city: { rank: '', total: '' }, school: { rank: '', total: '' } }, details: {}, branchSubject: 'mat', duration: '', wrongTopics: [] });
+  };
 
   let visibleExams = student.exams;
   if (filterType !== 'ALL') { visibleExams = visibleExams.filter(e => e.type === filterType); if(filterType === 'BRANS') visibleExams = visibleExams.filter(e => e.subject === branchFilter); }
@@ -976,17 +1278,22 @@ const ExamModule = ({ student, onUpdateStudent, user, curriculum }) => {
   
   const last10Exams = visibleExams.slice(-10);
   const chartData = last10Exams.map(e => ({...e, date: formatDate(e.date)}));
+  
   const getSubjectHistory = (subjectKey) => chartData.map(e => ({ date: e.date, net: e.details[subjectKey]?.n || 0 }));
 
   const getAverageStats = () => { 
     if(filterType === 'ALL' || filterType === 'BRANS' || last10Exams.length === 0) return null;
-    const subjectKeys = []; EXAM_TYPES[filterType].groups.forEach(g => g.sections.forEach(s => subjectKeys.push(s))); 
+    const subjectKeys = []; 
+    if(EXAM_TYPES[filterType]) {
+        EXAM_TYPES[filterType].groups.forEach(g => g.sections.forEach(s => subjectKeys.push(s))); 
+    }
     const avgTotal = last10Exams.reduce((a,b) => a + b.totalNet, 0) / last10Exams.length;
     return (
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6">
         <div className={`${colors.bgCard} p-4 rounded-xl border ${colors.border} text-center ${colors.shadow}`}><div className={`text-[10px] ${colors.textSec} uppercase font-bold mb-1`}>Analiz Edilen</div><div className={`text-xl font-bold ${colors.text}`}>{last10Exams.length} <span className="text-xs font-normal text-slate-500">/ {visibleExams.length}</span></div></div>
         <div className={`${colors.bgCard} p-4 rounded-xl border ${colors.border} text-center ${colors.shadow}`}><div className={`text-[10px] ${colors.textSec} uppercase font-bold mb-1`}>Son 10 Ort.</div><div className="text-xl font-bold text-orange-500">{avgTotal.toFixed(2)}</div></div>
-        {subjectKeys.map(sub => { const avgSub = last10Exams.reduce((a,b) => a + (b.details[sub.key]?.n || 0), 0) / last10Exams.length; return (<div key={sub.key} className={`${colors.bgCard} p-4 rounded-xl border ${colors.border} text-center ${colors.shadow}`}><div className={`text-[10px] ${colors.textSec} uppercase font-bold mb-1 truncate`}>{sub.label} Ort.</div><div className="text-xl font-bold text-emerald-400">{avgSub.toFixed(1)}</div></div>) })}
+        {/* DÜZENLEME: Ortalamalar artık 2 basamaklı */}
+        {subjectKeys.map(sub => { const avgSub = last10Exams.reduce((a,b) => a + (b.details[sub.key]?.n || 0), 0) / last10Exams.length; return (<div key={sub.key} className={`${colors.bgCard} p-4 rounded-xl border ${colors.border} text-center ${colors.shadow}`}><div className={`text-[10px] ${colors.textSec} uppercase font-bold mb-1 truncate`}>{sub.label} Ort.</div><div className="text-xl font-bold text-emerald-400">{avgSub.toFixed(2)}</div></div>) })}
       </div>
     );
   }
@@ -994,7 +1301,11 @@ const ExamModule = ({ student, onUpdateStudent, user, curriculum }) => {
   const getTableHeaders = () => { 
       if(filterType === 'ALL') return ['Tarih', 'Sınav', 'Tür', 'Net', 'Yanlış', 'İşlem'];
       if(filterType === 'BRANS') return ['Tarih', 'Sınav', 'Ders', 'Süre', 'Net', 'Yanlış', 'İşlem']; 
-      const subjects = []; EXAM_TYPES[filterType]?.groups.forEach(g => g.sections.forEach(s => subjects.push(s.label)));
+      
+      const subjects = []; 
+      if(EXAM_TYPES[filterType]) {
+          EXAM_TYPES[filterType].groups.forEach(g => g.sections.forEach(s => subjects.push(s.label)));
+      }
       return ['Tarih', 'Sınav', ...subjects, 'Toplam', 'Yanlış', 'İşlem']; 
   };
 
@@ -1003,25 +1314,22 @@ const ExamModule = ({ student, onUpdateStudent, user, curriculum }) => {
       <div className={`flex flex-col lg:flex-row justify-between items-start lg:items-center ${colors.bgCardTransparent} p-4 rounded-xl border ${colors.border} gap-4`}>
           <div className={`flex flex-wrap gap-2 ${colors.isDark ? 'bg-slate-800' : 'bg-slate-200'} p-1 rounded-lg`}>{['TYT', 'AYT', 'LGS', 'BRANS'].map(type => (<button key={type} onClick={() => setFilterType(type)} className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${filterType === type ? 'bg-orange-600 text-white shadow' : `${colors.textSec} hover:${colors.text}`}`}>{type}</button>))}</div>
           {filterType === 'BRANS' && (<select value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)} className={`${colors.inputBg} border ${colors.inputBorder} ${colors.text} text-sm rounded-lg p-2.5 outline-none`}>{BRANCH_SUBJECTS.map(sub => <option key={sub.id} value={sub.id}>{sub.label}</option>)}</select>)}
-          <div className="flex gap-2 ml-auto"><Button size="small" variant={view === 'list' ? 'primary' : 'ghost'} onClick={() => { setView('list'); setEditingId(null); }}>Liste</Button>{isAdmin && <Button size="small" variant={view === 'add' ? 'primary' : 'ghost'} icon={Plus} onClick={() => { setView('add'); setEditingId(null); setFormData({ name: "", date: new Date().toISOString().split('T')[0], difficulty: "Orta", stats: { turkey: { rank: '', total: '' }, city: { rank: '', total: '' }, school: { rank: '', total: '' } }, details: {}, branchSubject: 'mat', duration: '', wrongTopics: [] }); }}>Ekle</Button>}</div>
+          <div className="flex gap-2 ml-auto"><Button size="small" variant={view === 'list' ? 'primary' : 'ghost'} onClick={() => { setView('list'); setEditingId(null); }}>Liste</Button>{isAdmin && <Button size="small" variant={view === 'add' ? 'primary' : 'ghost'} icon={Plus} onClick={handleAddNew}>Ekle</Button>}</div>
       </div>
 
       {view === 'list' && (<>
         {getAverageStats()}
         
-        {/* GRAFİKLER ALANI - ARTIK TAM GENİŞLİK VE YAN MENÜ YOK */}
         <div className="space-y-6">
             <Card title={`${filterType} Net Gelişimi (Son 10)`}>
                 <div className="h-72 w-full"><LineChart data={chartData} dataKey="totalNet" labelKey="date" subLabelKey="name" height={280} /></div>
             </Card>
             
-            {/* DERS BAZLI KÜÇÜK GRAFİKLER - ARTIK DETAYLI GÖRÜNÜYOR (showDots={false} kaldırıldı) */}
-            {filterType !== 'BRANS' && (
+            {filterType !== 'BRANS' && EXAM_TYPES[filterType] && (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {EXAM_TYPES[filterType]?.groups.flatMap(g => g.sections).map(section => (
+                    {EXAM_TYPES[filterType].groups.flatMap(g => g.sections).map(section => (
                         <div key={section.key} className={`${colors.bgCardTransparent} p-4 rounded-lg border ${colors.border}`}>
                             <div className={`text-xs font-bold ${colors.textSec} mb-2`}>{section.label}</div>
-                            {/* showDots attribute'u kaldırıldı, varsayılan olarak true olacak ve detaylar görünecek */}
                             <div className="h-40"><LineChart data={getSubjectHistory(section.key)} dataKey="net" labelKey="date" height={160} color="#3b82f6" maxValue={section.q} /></div>
                         </div>
                     ))}
@@ -1035,7 +1343,8 @@ const ExamModule = ({ student, onUpdateStudent, user, curriculum }) => {
                     <tr key={exam.id} className={colors.hoverBg}>
                         <td className={`p-3 ${colors.textSec}`}>{formatDate(exam.date)}</td>
                         <td className={`p-3 font-bold ${colors.text}`}>{exam.name}</td>
-                        {(filterType === 'ALL' || filterType === 'BRANS') ? (<><td className="p-3"><span className={`text-[10px] px-2 py-1 rounded bg-slate-700 text-slate-300`}>{exam.type === 'BRANS' ? exam.subject : exam.type}</span></td>{filterType === 'BRANS' && <td className="p-3 font-bold text-blue-400">{exam.duration ? `${exam.duration} dk` : '-'}</td>}</>) : (EXAM_TYPES[filterType]?.groups.flatMap(g => g.sections).map(sec => (<td key={sec.key} className="p-3 text-center">{exam.details[sec.key]?.n?.toFixed(1) || '-'}</td>)))}
+                        {/* DÜZENLEME: Ders netleri de artık 2 basamaklı (toFixed(2)) */}
+                        {(filterType === 'ALL' || filterType === 'BRANS') ? (<><td className="p-3"><span className={`text-[10px] px-2 py-1 rounded bg-slate-700 text-slate-300`}>{exam.type === 'BRANS' ? exam.subject : exam.type}</span></td>{filterType === 'BRANS' && <td className="p-3 font-bold text-blue-400">{exam.duration ? `${exam.duration} dk` : '-'}</td>}</>) : (EXAM_TYPES[filterType]?.groups.flatMap(g => g.sections).map(sec => (<td key={sec.key} className="p-3 text-center">{exam.details[sec.key]?.n?.toFixed(2) || '-'}</td>)))}
                         <td className="p-3 font-bold text-orange-500 text-lg">{exam.totalNet.toFixed(2)}</td>
                         <td className="p-3"><button onClick={()=>setShowWrongTopicsModal(exam)} className={`px-2 py-1 rounded text-xs border ${exam.wrongTopics?.length > 0 ? 'border-red-500 text-red-500 bg-red-500/10' : `${colors.border} ${colors.textSec}`}`}>{exam.wrongTopics?.length || 0} Konu</button></td>
                         <td className="p-3 flex gap-2 items-center"><button onClick={()=>setShowRankModal(exam)} className="text-blue-500 hover:bg-blue-500/10 p-2 rounded"><Activity size={16}/></button><button onClick={()=>handleEdit(exam)} className="text-slate-500 hover:text-orange-500 p-2"><Edit2 size={16}/></button><button onClick={()=>setDeleteConfirm(exam.id)} className="text-slate-500 hover:text-red-500 p-2"><Trash2 size={16}/></button></td>
@@ -1046,14 +1355,54 @@ const ExamModule = ({ student, onUpdateStudent, user, curriculum }) => {
       </>)}
 
       {view === 'add' && (
-        <div className="max-w-5xl mx-auto animate-fade-in"><Card title="Sınav Girişi">
+        <div className="max-w-5xl mx-auto animate-fade-in"><Card title={`Sınav Girişi (${examType})`}>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                 <Input label="Deneme Adı" value={formData.name} onChange={e=>setFormData({...formData, name: e.target.value})}/>
                 <Input label="Tarih" type="date" value={formData.date} onChange={e=>setFormData({...formData, date: e.target.value})}/>
-                {examType === 'BRANS' && (<Input label="Süre (Dk)" type="number" value={formData.duration} onChange={e=>setFormData({...formData, duration: e.target.value})} />)}
-                <div className="pt-6"><Button onClick={()=>setShowTopicModal(true)} variant="secondary" className="w-full">Yanlış Konuları Gir ({formData.wrongTopics?.length})</Button></div>
+                {examType === 'BRANS' && (
+                  <>
+                    <div><label className={`block text-xs font-bold ${colors.textSec} mb-2 uppercase`}>Branş</label><select className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg p-3 ${colors.text} text-sm`} value={formData.branchSubject} onChange={e => setFormData({...formData, branchSubject: e.target.value})}><option value="">Seçiniz</option>{BRANCH_SUBJECTS.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}</select></div>
+                    <Input label="Süre (Dk)" type="number" value={formData.duration} onChange={e=>setFormData({...formData, duration: e.target.value})} />
+                  </>
+                )}
+                <div className="pt-6 md:col-span-3"><Button onClick={()=>setShowTopicModal(true)} variant="secondary" className="w-full">Yanlış Konuları Gir ({formData.wrongTopics?.length})</Button></div>
             </div>
-            <div className="space-y-6 mb-8"><h4 className={`text-orange-500 font-bold border-b ${colors.border} pb-2`}>Sonuçlar</h4><div className="grid grid-cols-1 lg:grid-cols-2 gap-6">{EXAM_TYPES[examType].groups.map((group, idx) => (<div key={idx} className={`${colors.bgCard} border ${colors.border} rounded-xl p-5`}><h5 className={`${colors.text} font-bold mb-4`}>{group.title}</h5><div className="space-y-3">{group.sections.map(sec => (<div key={sec.key} className="flex justify-between items-center"><span className="text-sm">{sec.label}</span><div className="flex gap-2"><input type="number" placeholder="D" className={`w-14 ${colors.inputBg} border rounded p-1 text-center`} value={formData.details[sec.key]?.d || ''} onChange={e => updateDetail(sec.key, 'd', e.target.value)} /><input type="number" placeholder="Y" className={`w-14 ${colors.inputBg} border rounded p-1 text-center`} value={formData.details[sec.key]?.y || ''} onChange={e => updateDetail(sec.key, 'y', e.target.value)} /></div></div>))}</div></div>))}</div></div>
+            
+            <div className="space-y-6 mb-8">
+                <h4 className={`text-orange-500 font-bold border-b ${colors.border} pb-2`}>Sonuçlar</h4>
+                {examType === 'BRANS' ? (
+                   <div className={`${colors.bgCard} border ${colors.border} rounded-xl p-5`}>
+                      <h5 className={`${colors.text} font-bold mb-4`}>{BRANCH_SUBJECTS.find(s=>s.id === formData.branchSubject)?.label || 'Branş'} Sonuçları</h5>
+                      <div className="flex justify-between items-center">
+                          <span className="text-sm">Doğru / Yanlış</span>
+                          <div className="flex gap-2">
+                             <input type="number" placeholder="D" className={`w-20 ${colors.inputBg} border rounded p-2 text-center`} value={formData.details[formData.branchSubject]?.d || ''} onChange={e => updateDetail(formData.branchSubject, 'd', e.target.value)} />
+                             <input type="number" placeholder="Y" className={`w-20 ${colors.inputBg} border rounded p-2 text-center`} value={formData.details[formData.branchSubject]?.y || ''} onChange={e => updateDetail(formData.branchSubject, 'y', e.target.value)} />
+                          </div>
+                      </div>
+                   </div>
+                ) : (
+                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      {EXAM_TYPES[examType] && EXAM_TYPES[examType].groups.map((group, idx) => (
+                          <div key={idx} className={`${colors.bgCard} border ${colors.border} rounded-xl p-5`}>
+                              <h5 className={`${colors.text} font-bold mb-4`}>{group.title}</h5>
+                              <div className="space-y-3">
+                                  {group.sections.map(sec => (
+                                      <div key={sec.key} className="flex justify-between items-center">
+                                          <span className="text-sm">{sec.label}</span>
+                                          <div className="flex gap-2">
+                                              <input type="number" placeholder="D" className={`w-14 ${colors.inputBg} border rounded p-1 text-center`} value={formData.details[sec.key]?.d || ''} onChange={e => updateDetail(sec.key, 'd', e.target.value)} />
+                                              <input type="number" placeholder="Y" className={`w-14 ${colors.inputBg} border rounded p-1 text-center`} value={formData.details[sec.key]?.y || ''} onChange={e => updateDetail(sec.key, 'y', e.target.value)} />
+                                          </div>
+                                      </div>
+                                  ))}
+                              </div>
+                          </div>
+                      ))}
+                   </div>
+                )}
+            </div>
+
             {examType !== 'BRANS' && (<div className={`mb-8 ${colors.bgCardTransparent} rounded-xl border ${colors.border} p-4`}><h4 className={`${colors.textSec} text-sm font-bold mb-4 flex items-center gap-2`}><Activity size={16} /> Sıralama Bilgileri (İsteğe Bağlı)</h4><div className="grid grid-cols-1 md:grid-cols-3 gap-6">{['turkey', 'city', 'school'].map(scope => (<div key={scope} className={`${colors.bgCard} p-4 rounded-lg border ${colors.border} ${colors.shadow}`}><label className={`block text-xs font-bold ${colors.textSec} mb-2 uppercase`}>{scope === 'turkey' ? 'Türkiye' : scope === 'city' ? 'İl Geneli' : 'Kurum'}</label><div className="flex gap-2"><input placeholder="Sıralama" type="number" className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded p-2 text-sm ${colors.text}`} value={formData.stats[scope].rank} onChange={e => updateStat(scope, 'rank', e.target.value)} /><input placeholder="Katılım" type="number" className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded p-2 text-sm ${colors.text}`} value={formData.stats[scope].total} onChange={e => updateStat(scope, 'total', e.target.value)} /></div></div>))}</div></div>)}
             <div className="flex justify-end gap-4"><Button variant="secondary" onClick={()=>{setView('list'); setEditingId(null);}}>İptal</Button><Button onClick={handleSave} size="large">Kaydet</Button></div></Card>
         </div>
@@ -1521,6 +1870,10 @@ const MainApp = () => {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showNotifModal, setShowNotifModal] = useState(false);
   const { theme, toggleTheme } = useTheme();
+  // --- SAYFA BAŞLIĞI AYARI ---
+  useEffect(() => {
+    document.title = "Koçum Online";
+  }, []);
   const colors = useThemeColors();
 
   useEffect(() => {
@@ -1722,6 +2075,8 @@ const MainApp = () => {
               {myNotifications.length === 0 && <div className={`text-center ${colors.textSec} py-4`}>Okunmamış veya yeni bildirim yok.</div>}
           </div>
       </Modal>)}
+      {/* YAPAY ZEKA ASİSTANI */}
+      {user && <AIAssistant user={user} students={myStudents} />}
     </div>
   );
 };
