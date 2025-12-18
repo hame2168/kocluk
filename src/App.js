@@ -552,7 +552,7 @@ const part1 = "AIzaSy"; // Şifrenin başı (İlk 6 harf standarttır)
 const part2 = "CtHWdkNM1zm0Mrl7TyNwQZUUA4wSTxZpg"; // Şifrenin geri kalanı (Buraya kendi yeni şifrenin devamını yapıştır)
 
 const genAI = new GoogleGenerativeAI(part1 + part2);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
 
       // Sohbet Geçmişini Hazırla (Gemini Formatına Uygun)
       const chatHistory = messages.map(m => ({
