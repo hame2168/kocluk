@@ -2092,3 +2092,5 @@ export default function App() {
     </ThemeContext.Provider>
   );
     }
+
+    // Vercel guncelleme tetikleyici - v2
