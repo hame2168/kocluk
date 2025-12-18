@@ -8,7 +8,6 @@ import {
 } from 'lucide-react';
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, addDoc, updateDoc, doc, deleteDoc, onSnapshot, query, setDoc, getDoc } from "firebase/firestore";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 
 
 // --- FIREBASE ENTEGRASYONU ---
@@ -474,194 +473,6 @@ const AdminManagementModule = ({ admins, setAdmins, user, allStudents, onInspect
        {showModal && (<Modal title={editingAdmin ? "Öğretmen Lisans Düzenle" : "Yeni Öğretmen Ekle"} onClose={() => setShowModal(false)}><div className="space-y-4"><Input label="Ad Soyad" value={form.name} onChange={e => setForm({...form, name: e.target.value})} /><Input label="Kullanıcı Adı" value={form.username} onChange={e => setForm({...form, username: e.target.value})} /><Input label="Şifre" value={form.password} onChange={e => setForm({...form, password: e.target.value})} /><div className="grid grid-cols-2 gap-4 bg-orange-500/10 p-3 rounded-lg border border-orange-500/20"><div><label className={`block text-xs font-bold ${colors.textSec} mb-1`}>Başlangıç Tarihi</label><input type="date" className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded p-2 ${colors.text} text-sm`} value={form.startDate} onChange={e => setForm({...form, startDate: e.target.value})} /></div><div><label className={`block text-xs font-bold ${colors.textSec} mb-1`}>Bitiş Tarihi</label><input type="date" className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded p-2 ${colors.text} text-sm`} value={form.endDate} onChange={e => setForm({...form, endDate: e.target.value})} /></div><div className="col-span-2"><Input label="Öğrenci Kayıt Limiti" type="number" value={form.studentLimit} onChange={e => setForm({...form, studentLimit: e.target.value})} /></div></div><Button className="w-full" onClick={handleSave}>{editingAdmin ? "Güncelle" : "Kaydet"}</Button></div></Modal>)}
        <DeleteConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={async () => { if(isFirebaseActive) await deleteDoc(doc(db, "admins", deleteConfirm)); else setAdmins(admins.filter(a => a.id !== deleteConfirm)); setDeleteConfirm(null); }} />
     </div>
-  );
-};
-
-// --- AI ASİSTAN (YAPAY ZEKA KOÇ) ---
-const AIAssistant = ({ user, students }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const messagesEndRef = useRef(null);
-  const colors = useThemeColors();
-
-  // API ANAHTARI BURAYA (Tırnak içine yapıştır)
-  // Güvenlik için .env dosyasında saklaman önerilir: process.env.REACT_APP_GEMINI_KEY
-  // Kodun içinden şifreyi siliyoruz, çevresel değişkenden almasını söylüyoruz
-const API_KEY = "AIzaSyCtHWdkNM1zm0Mrl7TyNwQZUUA4wSTxZpg";
-
-  // Sohbet Geçmişini Yükle (Hafıza Özelliği)
-  useEffect(() => {
-    if (!user || !isFirebaseActive) return;
-    const loadHistory = async () => {
-      const docRef = doc(db, "ai_history", user.id);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        setMessages(docSnap.data().chat || []);
-      } else {
-        // İlk açılış mesajı
-        setMessages([{
-          role: "model",
-          text: `Merhaba Hocam! Ben senin yapay zeka asistanınım. Şu an ${students.length} öğrencinin verisine hakimim. Bana öğrencilerinin durumunu, analizlerini veya planlamalarını sorabilirsin.`
-        }]);
-      }
-    };
-    loadHistory();
-  }, [user, isFirebaseActive, students.length]);
-
-  // Otomatik Kaydırma
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isOpen]);
-
-  const handleSend = async () => {
-    if (!input.trim() || !API_KEY) return;
-    const userMessage = { role: "user", text: input };
-    setMessages((prev) => [...prev, userMessage]);
-    setInput("");
-    setIsLoading(true);
-
-    try {
-      // Öğrenci Verilerini Özetle (Yapay Zekaya Bağlam Kazandır)
-      const contextData = students.map(s => ({
-        name: s.name,
-        grade: s.grade,
-        target: s.target,
-        totalSolved: s.stats?.totalSolved || 0,
-        lastExam: s.exams?.[0] ? `${s.exams[0].name} (${s.exams[0].totalNet} Net)` : "Yok",
-        mood: s.moods?.[0] ? `Motivasyon: ${s.moods[0].metrics.motivation}` : "Bilinmiyor"
-      }));
-
-      const systemPrompt = `
-        Sen bir eğitim koçu asistanısın. Adın "Koçum AI".
-        samimi ve motive edici bir dil kullan.
-        Öğretmene "Hocam" diye hitap et.
-        Elinin altında şu öğrencilerin verileri var (JSON formatında): ${JSON.stringify(contextData)}.
-        Eğer kullanıcı belirli bir öğrenciyi sorarsa bu verileri kullanarak analiz yap.
-        Genel eğitim sorularına pedagojik ve bilimsel cevaplar ver.
-        Cevapların çok uzun olmasın, özet ve net olsun.
-      `;
-
-
-
-      // Gemini Modelini Başlat
-      // Şifreyi direkt buraya gömüyoruz:
-    // Şifreyi parçalayarak yazıyoruz ki Google silmesin:
-const part1 = "AIzaSy"; // Şifrenin başı (İlk 6 harf standarttır)
-const part2 = "CtHWdkNM1zm0Mrl7TyNwQZUUA4wSTxZpg"; // Şifrenin geri kalanı (Buraya kendi yeni şifrenin devamını yapıştır)
-
-const genAI = new GoogleGenerativeAI(part1 + part2);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
-
-      // Sohbet Geçmişini Hazırla (Gemini Formatına Uygun)
-      const chatHistory = messages.map(m => ({
-        role: m.role === 'user' ? 'user' : 'model',
-        parts: [{ text: m.text }]
-      }));
-
-      // Sohbeti Başlat
-      const chat = model.startChat({
-        history: [
-            { role: "user", parts: [{ text: systemPrompt }] }, // Sistem talimatını ilk mesaj gibi gizlice veriyoruz
-            { role: "model", parts: [{ text: "Anlaşıldı hocam, hazırım." }] },
-            ...chatHistory
-        ],
-      });
-
-      const result = await chat.sendMessage(input);
-      const response = result.response;
-      const text = response.text();
-
-      const aiMessage = { role: "model", text: text };
-      const updatedMessages = [...messages, userMessage, aiMessage];
-      
-      setMessages(updatedMessages);
-
-      // Geçmişi Firebase'e Kaydet (Hafıza)
-      if (isFirebaseActive) {
-        await setDoc(doc(db, "ai_history", user.id), { chat: updatedMessages });
-      }
-
-    } catch (error) {
-      console.error("AI Hatası:", error);
-      setMessages((prev) => [...prev, { role: "model", text: "Üzgünüm hocam, şu an bağlantıda bir sorun var. API anahtarını veya interneti kontrol eder misin?" }]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Sadece Admin/Öğretmen görebilir
-  if (user.role === 'student') return null;
-
-  return (
-    <>
-      {/* Floating Button (Minimal Simge) */}
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className={`fixed bottom-6 right-6 z-[100] w-14 h-14 rounded-full shadow-2xl flex items-center justify-center transition-all hover:scale-110 ${isOpen ? 'bg-red-500 rotate-90' : 'bg-gradient-to-r from-orange-600 to-pink-600'} text-white border-2 border-white`}
-      >
-        {isOpen ? <X size={24} /> : <Zap size={28} fill="currentColor" />}
-      </button>
-
-      {/* Chat Penceresi */}
-      {isOpen && (
-        <div className={`fixed bottom-24 right-6 z-[100] w-full max-w-sm md:w-96 h-[500px] ${colors.bgCard} border ${colors.border} rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-fade-in`}>
-          {/* Header */}
-          <div className="bg-gradient-to-r from-orange-600 to-pink-600 p-4 flex items-center justify-between">
-            <div className="flex items-center gap-2 text-white">
-              <div className="w-8 h-8 bg-white/20 rounded-full flex items-center justify-center"><Zap size={18} fill="currentColor"/></div>
-              <div>
-                <h3 className="font-bold text-sm">Koçum AI</h3>
-                <span className="text-[10px] opacity-80 block">Öğrenci Analiz Asistanı</span>
-              </div>
-            </div>
-            <button onClick={() => {setMessages([]); if(isFirebaseActive) deleteDoc(doc(db, "ai_history", user.id));}} className="text-white/70 hover:text-white" title="Hafızayı Temizle"><Trash2 size={16}/></button>
-          </div>
-
-          {/* Mesaj Alanı */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar bg-slate-50/5 dark:bg-black/20">
-            {messages.map((m, idx) => (
-              <div key={idx} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] p-3 rounded-2xl text-xs md:text-sm leading-relaxed ${m.role === 'user' ? 'bg-orange-600 text-white rounded-br-none' : `${colors.isDark ? 'bg-slate-800' : 'bg-slate-200'} ${colors.text} rounded-bl-none`}`}>
-                  {/* Basit Markdown temizliği ve satır başları */}
-                  {m.text.split('\n').map((line, i) => <p key={i} className="mb-1">{line}</p>)}
-                </div>
-              </div>
-            ))}
-            {isLoading && (
-              <div className="flex justify-start">
-                <div className={`${colors.isDark ? 'bg-slate-800' : 'bg-slate-200'} p-3 rounded-2xl rounded-bl-none flex gap-1`}>
-                  <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
-                  <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce delay-75"></div>
-                  <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce delay-150"></div>
-                </div>
-              </div>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-
-          {/* Input Alanı */}
-          <div className={`p-3 border-t ${colors.border} flex gap-2 ${colors.bgCard}`}>
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-              placeholder="Bir şeyler sor... (Örn: Ahmet'in netleri nasıl?)"
-              className={`flex-1 ${colors.inputBg} border ${colors.inputBorder} rounded-full px-4 py-2 text-sm focus:outline-none focus:border-orange-500 transition-colors ${colors.text}`}
-            />
-            <button 
-                onClick={handleSend} 
-                disabled={isLoading || !input.trim()}
-                className="bg-orange-600 hover:bg-orange-700 text-white p-2.5 rounded-full disabled:opacity-50 transition-transform hover:scale-105 active:scale-95"
-            >
-              <ArrowUp size={18} />
-            </button>
-          </div>
-        </div>
-      )}
-    </>
   );
 };
 
@@ -2082,8 +1893,6 @@ const MainApp = () => {
               {myNotifications.length === 0 && <div className={`text-center ${colors.textSec} py-4`}>Okunmamış veya yeni bildirim yok.</div>}
           </div>
       </Modal>)}
-      {/* YAPAY ZEKA ASİSTANI */}
-      {user && <AIAssistant user={user} students={myStudents} />}
     </div>
   );
 };
@@ -2099,5 +1908,3 @@ export default function App() {
     </ThemeContext.Provider>
   );
     }
-
-    // Vercel guncelleme tetikleyici - v2
