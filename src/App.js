@@ -545,7 +545,7 @@ const API_KEY = "AIzaSyAVGQ3n0HQEdE4dWFYHIp58V7AyXykIinQ";
 
       // Gemini Modelini Başlat
       const genAI = new GoogleGenerativeAI(API_KEY);
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+      const model = genAI.getGenerativeModel({ model: "gemini-pro" });
 
       // Sohbet Geçmişini Hazırla (Gemini Formatına Uygun)
       const chatHistory = messages.map(m => ({
