@@ -489,7 +489,7 @@ const AIAssistant = ({ user, students }) => {
   // API ANAHTARI BURAYA (Tırnak içine yapıştır)
   // Güvenlik için .env dosyasında saklaman önerilir: process.env.REACT_APP_GEMINI_KEY
   // Kodun içinden şifreyi siliyoruz, çevresel değişkenden almasını söylüyoruz
-const API_KEY = "AIzaSyAVGQ3n0HQEdE4dWFYHIp58V7AyXykIinQ";
+const API_KEY = "AIzaSyCtHWdkNM1zm0Mrl7TyNwQZUUA4wSTxZpg";
 
   // Sohbet Geçmişini Yükle (Hafıza Özelliği)
   useEffect(() => {
@@ -544,7 +544,8 @@ const API_KEY = "AIzaSyAVGQ3n0HQEdE4dWFYHIp58V7AyXykIinQ";
       `;
 
       // Gemini Modelini Başlat
-      const genAI = new GoogleGenerativeAI(API_KEY);
+      // Şifreyi direkt buraya gömüyoruz:
+const genAI = new GoogleGenerativeAI("AIzaSyCtHWdkNM1zm0Mrl7TyNwQZUUA4wSTxZpg");
       const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
       // Sohbet Geçmişini Hazırla (Gemini Formatına Uygun)
