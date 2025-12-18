@@ -489,7 +489,7 @@ const AIAssistant = ({ user, students }) => {
   // API ANAHTARI BURAYA (Tırnak içine yapıştır)
   // Güvenlik için .env dosyasında saklaman önerilir: process.env.REACT_APP_GEMINI_KEY
   // Kodun içinden şifreyi siliyoruz, çevresel değişkenden almasını söylüyoruz
-const API_KEY = process.env.REACT_APP_GEMINI_KEY;
+const API_KEY = "AIzaSyAVGQ3n0HQEdE4dWFYHIp58V7AyXykIinQ";
 
   // Sohbet Geçmişini Yükle (Hafıza Özelliği)
   useEffect(() => {
