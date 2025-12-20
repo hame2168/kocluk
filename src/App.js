@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef, useContext, createContext } from 'react';
 import { 
-  Layout, Users, BookOpen, Target, Smile, MessageSquare, CreditCard, LogOut, Plus, Trash2, 
+  Layout, Users, BookOpen, Target, Smile, MessageSquare, MessageCircle, CreditCard, LogOut, Plus, Trash2, 
   ChevronRight, User, Lock, Check, Edit2, Save, X, Calendar, ChevronDown, BarChart2, ArrowUp, ArrowDown, 
   Activity, Award, Clock, List, Book, RefreshCw, Zap, 
   Library, CheckCircle, Flag, Phone, GraduationCap, 
   Play, Pause, RotateCcw, Timer, Menu, CloudOff, Cloud, Shield, Eye, Sun, Moon, Settings
 } from 'lucide-react';
 import { initializeApp } from "firebase/app";
-import { getFirestore, collection, addDoc, updateDoc, doc, deleteDoc, onSnapshot, query, setDoc, getDoc } from "firebase/firestore";
+import { getFirestore, collection, addDoc, updateDoc, doc, deleteDoc, onSnapshot, query, setDoc, getDoc, arrayUnion } from "firebase/firestore";
 
 
 // --- FIREBASE ENTEGRASYONU ---
@@ -476,7 +476,7 @@ const AdminManagementModule = ({ admins, setAdmins, user, allStudents, onInspect
   );
 };
 
-// 0. DASHBOARD (GÜNCELLENMİŞ: Seçim İkonu & Mobil Menü)
+// 0. DASHBOARD (GÜNCELLENMİŞ: WhatsApp Butonu + Mobil Menü)
 const DashboardModule = ({ user, students, setStudents, setSelectedStudentId, onUpdateStudent, classes, setClasses, licenseInfo, admins, setIsMobileMenuOpen, selectedStudentId }) => {
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -495,60 +495,65 @@ const DashboardModule = ({ user, students, setStudents, setSelectedStudentId, on
   const timerRef = useRef(null);
   const colors = useThemeColors();
 
+  // WhatsApp'a yönlendirme fonksiyonu
+  const handleWhatsApp = (e, phone) => {
+    e.stopPropagation();
+    if (!phone) return alert("Bu öğrencinin telefon numarası kayıtlı değil.");
+    // Numaradaki boşluk, parantez vb. temizle sadece rakamları al
+    const cleanPhone = phone.replace(/[^0-9]/g, '');
+    window.open(`https://wa.me/90${cleanPhone.replace(/^0/, '').replace(/^90/, '')}`, '_blank');
+  };
+
   useEffect(() => {
     if (isActive && timeLeft > 0) { timerRef.current = setInterval(() => { setTimeLeft((prev) => prev - 1); }, 1000); } 
     else if (timeLeft === 0) { clearInterval(timerRef.current); setIsActive(false); handleTimerComplete(); }
     return () => clearInterval(timerRef.current);
   }, [isActive, timeLeft]);
-
-  const handleTimerComplete = () => { if (user.role === 'student') { const s = students.find(x=>x.id===user.id); if(s) onUpdateStudent({...s, stats:{...s.stats, pomodoroCount: (s.stats.pomodoroCount||0)+1}}); } resetTimer(timerMode); };
-  const resetTimer = (mode) => { setIsActive(false); clearInterval(timerRef.current); if (mode === 'pomodoro') setTimeLeft(25 * 60); else setTimeLeft(50 * 60); };
+  const handleTimerComplete = () => { if (user.role === 'student') { const s = students.find(x=>x.id===user.id); if(s) onUpdateStudent({...s, stats:{...s.stats, pomodoroCount: (s.stats.pomodoroCount||0)+1}});
+  } resetTimer(timerMode); };
+  const resetTimer = (mode) => { setIsActive(false); clearInterval(timerRef.current); if (mode === 'pomodoro') setTimeLeft(25 * 60);
+  else setTimeLeft(50 * 60); };
   const changeMode = (mode) => { setTimerMode(mode); resetTimer(mode); };
   const toggleTimer = () => setIsActive(!isActive);
-
-  // ÖĞRENCİ KAYIT
+  
   const handleSave = async () => {
     if(!form.name || !form.username) return alert("Zorunlu alanları doldurun.");
-    
     const studentExists = students.some(s => s.username === form.username && s.id !== editingId);
     const adminExists = admins.some(a => a.username === form.username);
-
     if (studentExists || adminExists) {
         return alert("Bu kullanıcı adı zaten kullanımda. Lütfen başka bir kullanıcı adı seçin.");
     }
-
     if (!editingId && user.role === 'admin' && licenseInfo && licenseInfo.used >= licenseInfo.limit) return alert(`Kota doldu!`);
-    
     const data = { ...form, teacherId: user.id, ...(!editingId && { exams:[], moods:[], lessons:{}, payments:[], teacherNotes:[], assignments:[], pastWeeks:[], stats:{ totalSolved:0, monthlySolved:0 } }) };
-    
     if (editingId) { const s = students.find(x=>x.id===editingId); onUpdateStudent({...s, ...data}); setEditingId(null); }
-    else { if(isFirebaseActive) await addDoc(collection(db,"students"), data); else setStudents([...students, {id:Date.now(), ...data}]); }
+    else { if(isFirebaseActive) await addDoc(collection(db,"students"), data);
+    else setStudents([...students, {id:Date.now(), ...data}]); }
     
-    setShowModal(false); setForm({ name:'', grade:'', target:'', phone:'', school:'', username:'', password:'', classId:'' });
+    setShowModal(false);
+    setForm({ name:'', grade:'', target:'', phone:'', school:'', username:'', password:'', classId:'' });
   };
 
-  const handleAddClass = async () => { if(!newClassName) return; const c = {name:newClassName, teacherId:user.id}; if(isFirebaseActive) await addDoc(collection(db,"classes"),c); else setClasses([...classes, {id:Date.now(),...c}]); setNewClassName(''); };
+  const handleAddClass = async () => { if(!newClassName) return;
+  const c = {name:newClassName, teacherId:user.id}; if(isFirebaseActive) await addDoc(collection(db,"classes"),c); else setClasses([...classes, {id:Date.now(),...c}]); setNewClassName(''); };
   const handleDeleteClass = async (id) => { if(window.confirm("Silinsin mi?")) { if(isFirebaseActive) await deleteDoc(doc(db,"classes",id)); else setClasses(classes.filter(c=>c.id!==id)); } };
-  
   const handleSendTeacherNotif = async () => {
       if(!notifMsg) return;
       const newNotif = { text: notifMsg, date: new Date().toISOString(), sender: user.name, senderId: user.id, target: 'my_students', readBy: [] };
-      if(isFirebaseActive) { try { await addDoc(collection(db, "notifications"), newNotif); alert("Duyuru öğrencilerime gönderildi."); setNotifMsg(''); setShowNotifModal(false); } catch(e) { alert("Hata: " + e.message); } } else { alert("Demo modunda gönderildi."); setShowNotifModal(false); }
+      if(isFirebaseActive) { try { await addDoc(collection(db, "notifications"), newNotif); alert("Duyuru öğrencilerime gönderildi."); setNotifMsg(''); setShowNotifModal(false); } catch(e) { alert("Hata: " + e.message);
+      } } else { alert("Demo modunda gönderildi."); setShowNotifModal(false); }
   };
-
-  const handleEdit = (student) => { setForm({ name: student.name, grade: student.grade, target: student.target, phone: student.phone, school: student.school, username: student.username, password: student.password, classId: student.classId || '' }); setEditingId(student.id); setShowModal(true); };
-  const confirmDelete = async () => { if (deleteConfirm) { if(isFirebaseActive) await deleteDoc(doc(db, "students", deleteConfirm)); else setStudents(students.filter(s => s.id !== deleteConfirm)); setSelectedStudentId(null); setDeleteConfirm(null); } };
-
+  const handleEdit = (student) => { setForm({ name: student.name, grade: student.grade, target: student.target, phone: student.phone, school: student.school, username: student.username, password: student.password, classId: student.classId || '' });
+  setEditingId(student.id); setShowModal(true); };
+  const confirmDelete = async () => { if (deleteConfirm) { if(isFirebaseActive) await deleteDoc(doc(db, "students", deleteConfirm));
+  else setStudents(students.filter(s => s.id !== deleteConfirm)); setSelectedStudentId(null); setDeleteConfirm(null); } };
   const filteredStudents = students.filter(student => {
       const matchesSearch = student.name.toLowerCase().includes(searchQuery.toLowerCase());
       if (selectedClassFilter === 'ALL') return matchesSearch;
       if (selectedClassFilter === 'NO_CLASS') return matchesSearch && (!student.classId || !classes.find(c => c.id === student.classId));
       return matchesSearch && student.classId === selectedClassFilter;
   });
-
   const handleSelectStudent = (id) => {
       setSelectedStudentId(id);
-      // GÜNCELLEME 1: Mobilde menüyü aç
       if (window.innerWidth < 768) {
           setIsMobileMenuOpen(true);
       }
@@ -559,8 +564,15 @@ const DashboardModule = ({ user, students, setStudents, setSelectedStudentId, on
      if (!s) return <div>Yükleniyor...</div>;
      return (
         <div className="space-y-6 animate-fade-in">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><Card className="bg-gradient-to-br from-slate-900 to-slate-800 border-orange-500/30"><div className="flex justify-between items-start mb-4"><h3 className="text-lg font-bold text-white flex items-center gap-2"><Timer className="text-orange-500"/> Çalışma Sayacı</h3><div className="flex bg-slate-800 rounded p-1"><button onClick={() => changeMode('pomodoro')} className={`px-3 py-1 text-xs font-bold rounded transition-colors ${timerMode === 'pomodoro' ? 'bg-orange-500 text-white' : 'text-slate-400 hover:text-white'}`}>Pomodoro</button><button onClick={() => changeMode('sprint')} className={`px-3 py-1 text-xs font-bold rounded transition-colors ${timerMode === 'sprint' ? 'bg-orange-500 text-white' : 'text-slate-400 hover:text-white'}`}>Sprint</button></div></div><div className="flex flex-col items-center justify-center py-4"><div className="text-5xl md:text-6xl font-mono font-bold text-white mb-6 tracking-wider">{formatTime(timeLeft)}</div><div className="flex gap-4"><Button onClick={toggleTimer} size="large" className={isActive ? "bg-amber-600 hover:bg-amber-700" : "bg-emerald-600 hover:bg-emerald-700"}>{isActive ? <><Pause size={20}/> Duraklat</> : <><Play size={20}/> Başlat</>}</Button><Button variant="secondary" onClick={() => resetTimer(timerMode)}><RotateCcw size={20}/> Sıfırla</Button></div></div></Card><div className="grid grid-cols-2 gap-4"><Card className={`${colors.bgCard} flex flex-col items-center justify-center text-center`}><div className="w-12 h-12 rounded-full bg-orange-500/20 flex items-center justify-center mb-2 text-orange-500"><Clock size={24}/></div><div className={`text-3xl font-bold ${colors.text}`}>{s.stats?.pomodoroCount || 0}</div><div className={`text-xs ${colors.textSec} uppercase font-bold mt-1`}>Pomodoro</div></Card><Card className={`${colors.bgCard} flex flex-col items-center justify-center text-center`}><div className="w-12 h-12 rounded-full bg-blue-500/20 flex items-center justify-center mb-2 text-blue-500"><Zap size={24}/></div><div className={`text-3xl font-bold ${colors.text}`}>{s.stats?.sprintCount || 0}</div><div className={`text-xs ${colors.textSec} uppercase font-bold mt-1`}>Sprint</div></Card><Card className={`${colors.bgCard} flex flex-col items-center justify-center text-center col-span-2`}><div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center mb-2 text-green-500"><Award size={24}/></div><div className={`text-3xl font-bold ${colors.text}`}>{s.stats?.totalSolved || 0}</div><div className={`text-xs ${colors.textSec} uppercase font-bold mt-1`}>Toplam Soru</div></Card></div></div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"><Card className={`border-l-4 border-l-blue-500 ${colors.bgCard}`}><div className={`${colors.textSec} text-xs uppercase font-bold mb-2`}>Toplam Deneme</div><div className={`text-4xl font-bold ${colors.text}`}>{s.exams?.length || 0}</div></Card><Card className={`border-l-4 border-l-green-500 ${colors.bgCard}`}><div className={`${colors.textSec} text-xs uppercase font-bold mb-2`}>Bitirilen Konu</div><div className={`text-4xl font-bold ${colors.text}`}>{Object.values(s.lessons || {}).filter(l => l.konu).length}</div></Card><Card className={`border-l-4 border-l-orange-500 ${colors.bgCard}`}><div className={`${colors.textSec} text-xs uppercase font-bold mb-2`}>Son Deneme Neti</div><div className={`text-4xl font-bold ${colors.text}`}>{s.exams?.length > 0 ? s.exams[0].totalNet.toFixed(1) : '-'}</div></Card><Card className={`border-l-4 border-l-purple-500 ${colors.bgCard}`}><div className={`${colors.textSec} text-xs uppercase font-bold mb-2`}>Aylık Soru</div><div className={`text-4xl font-bold ${colors.text}`}>{s.stats?.monthlySolved || 0}</div></Card></div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><Card className="bg-gradient-to-br from-slate-900 to-slate-800 border-orange-500/30"><div className="flex justify-between items-start mb-4"><h3 className="text-lg font-bold text-white flex items-center gap-2"><Timer className="text-orange-500"/> Çalışma Sayacı</h3><div className="flex bg-slate-800 rounded p-1"><button onClick={() => changeMode('pomodoro')} className={`px-3 py-1 text-xs font-bold rounded transition-colors ${timerMode === 'pomodoro' ? 'bg-orange-500 text-white' : 'text-slate-400 hover:text-white'}`}>Pomodoro</button><button onClick={() => changeMode('sprint')} className={`px-3 py-1 text-xs font-bold rounded transition-colors ${timerMode === 'sprint' ? 'bg-orange-500 text-white' : 'text-slate-400 hover:text-white'}`}>Sprint</button></div></div><div className="flex flex-col items-center justify-center py-4"><div className="text-5xl md:text-6xl font-mono font-bold text-white mb-6 tracking-wider">{formatTime(timeLeft)}</div><div className="flex gap-4"><Button onClick={toggleTimer} size="large" className={isActive ? "bg-amber-600 hover:bg-amber-700" : "bg-emerald-600 hover:bg-emerald-700"}>{isActive ?
+            <><Pause size={20}/> Duraklat</> : <><Play size={20}/> Başlat</>}</Button><Button variant="secondary" onClick={() => resetTimer(timerMode)}><RotateCcw size={20}/> Sıfırla</Button></div></div></Card><div className="grid grid-cols-2 gap-4"><Card className={`${colors.bgCard} flex flex-col items-center justify-center text-center`}><div className="w-12 h-12 rounded-full bg-orange-500/20 flex items-center justify-center mb-2 text-orange-500"><Clock size={24}/></div><div className={`text-3xl font-bold ${colors.text}`}>{s.stats?.pomodoroCount ||
+            0}</div><div className={`text-xs ${colors.textSec} uppercase font-bold mt-1`}>Pomodoro</div></Card><Card className={`${colors.bgCard} flex flex-col items-center justify-center text-center`}><div className="w-12 h-12 rounded-full bg-blue-500/20 flex items-center justify-center mb-2 text-blue-500"><Zap size={24}/></div><div className={`text-3xl font-bold ${colors.text}`}>{s.stats?.sprintCount ||
+            0}</div><div className={`text-xs ${colors.textSec} uppercase font-bold mt-1`}>Sprint</div></Card><Card className={`${colors.bgCard} flex flex-col items-center justify-center text-center col-span-2`}><div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center mb-2 text-green-500"><Award size={24}/></div><div className={`text-3xl font-bold ${colors.text}`}>{s.stats?.totalSolved ||
+            0}</div><div className={`text-xs ${colors.textSec} uppercase font-bold mt-1`}>Toplam Soru</div></Card></div></div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"><Card className={`border-l-4 border-l-blue-500 ${colors.bgCard}`}><div className={`${colors.textSec} text-xs uppercase font-bold mb-2`}>Toplam Deneme</div><div className={`text-4xl font-bold ${colors.text}`}>{s.exams?.length ||
+            0}</div></Card><Card className={`border-l-4 border-l-green-500 ${colors.bgCard}`}><div className={`${colors.textSec} text-xs uppercase font-bold mb-2`}>Bitirilen Konu</div><div className={`text-4xl font-bold ${colors.text}`}>{Object.values(s.lessons || {}).filter(l => l.konu).length}</div></Card><Card className={`border-l-4 border-l-orange-500 ${colors.bgCard}`}><div className={`${colors.textSec} text-xs uppercase font-bold mb-2`}>Son Deneme Neti</div><div className={`text-4xl font-bold ${colors.text}`}>{s.exams?.length > 0 ?
+            s.exams[0].totalNet.toFixed(1) : '-'}</div></Card><Card className={`border-l-4 border-l-purple-500 ${colors.bgCard}`}><div className={`${colors.textSec} text-xs uppercase font-bold mb-2`}>Aylık Soru</div><div className={`text-4xl font-bold ${colors.text}`}>{s.stats?.monthlySolved ||
+            0}</div></Card></div>
             {s.teacherNotes && s.teacherNotes.length > 0 && (<div className="mt-6"><Card title="Öğretmenden Notlar" className={`border-l-4 border-l-orange-500 ${colors.bgCard}`}><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{s.teacherNotes.map((note, idx) => (<div key={idx} className={`${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} p-4 rounded-lg border ${colors.border}`}><div className="flex items-center gap-2 mb-2"><MessageSquare size={14} className="text-orange-500" /><span className={`text-xs font-bold ${colors.textSec}`}>{note.date}</span></div><p className={`${colors.text} text-sm italic whitespace-pre-wrap`}>"{note.text}"</p></div>))}</div></Card></div>)}
         </div>
      );
@@ -582,25 +594,32 @@ const DashboardModule = ({ user, students, setStudents, setSelectedStudentId, on
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredStudents.map(student => {
-              // GÜNCELLEME 1: Seçim Durumunu Kontrol Et
               const isSelected = selectedStudentId === student.id;
               return (
                   <div key={student.id} className={`${colors.bgCard} border ${isSelected ? 'border-emerald-500' : colors.border} rounded-xl p-6 hover:border-orange-500/50 transition-all group relative ${colors.shadow}`}>
                       <div className="flex items-start justify-between mb-4">
                           <div className="flex items-center gap-4 cursor-pointer" onClick={() => handleSelectStudent(student.id)}>
-                              <div className={`w-16 h-16 bg-gradient-to-br ${colors.isDark ? 'from-slate-800 to-slate-700' : 'from-slate-200 to-slate-100'} rounded-full flex items-center justify-center text-2xl font-bold ${colors.text} border ${colors.border}`}>{student.name.charAt(0)}</div>
-                              <div><h3 className={`text-lg font-bold ${colors.text} group-hover:text-orange-400 transition-colors`}>{student.name}</h3><div className={`text-sm ${colors.textSec}`}>{student.grade}</div><span className={`inline-block mt-1 text-[10px] px-2 py-0.5 rounded ${colors.isDark ? 'bg-blue-900/30 text-blue-400' : 'bg-blue-100 text-blue-600'}`}>{student.classId && classes.find(c => c.id === student.classId) ? classes.find(c => c.id === student.classId).name : 'Sınıfsız'}</span></div>
+                               <div className={`w-16 h-16 bg-gradient-to-br ${colors.isDark ? 'from-slate-800 to-slate-700' : 'from-slate-200 to-slate-100'} rounded-full flex items-center justify-center text-2xl font-bold ${colors.text} border ${colors.border}`}>{student.name.charAt(0)}</div>
+                              <div><h3 className={`text-lg font-bold ${colors.text} group-hover:text-orange-400 transition-colors`}>{student.name}</h3><div className={`text-sm ${colors.textSec}`}>{student.grade}</div><span className={`inline-block mt-1 text-[10px] px-2 py-0.5 rounded ${colors.isDark ?
+                              'bg-blue-900/30 text-blue-400' : 'bg-blue-100 text-blue-600'}`}>{student.classId && classes.find(c => c.id === student.classId) ?
+                              classes.find(c => c.id === student.classId).name : 'Sınıfsız'}</span></div>
                           </div>
-                          <div className="flex gap-2"><button onClick={(e) => {e.stopPropagation(); handleEdit(student)}} className={`p-2 ${colors.textSec} hover:text-blue-400 ${colors.isDark ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-100 hover:bg-slate-200'} rounded-lg`}><Edit2 size={16}/></button><button onClick={(e) => {e.stopPropagation(); e.preventDefault(); setDeleteConfirm(student.id);}} className={`p-2 ${colors.textSec} hover:text-red-500 ${colors.isDark ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-100 hover:bg-slate-200'} rounded-lg`}><Trash2 size={16}/></button></div>
+                          <div className="flex gap-2"><button onClick={(e) => {e.stopPropagation();
+                          handleEdit(student)}} className={`p-2 ${colors.textSec} hover:text-blue-400 ${colors.isDark ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-100 hover:bg-slate-200'} rounded-lg`}><Edit2 size={16}/></button><button onClick={(e) => {e.stopPropagation(); e.preventDefault();
+                          setDeleteConfirm(student.id);}} className={`p-2 ${colors.textSec} hover:text-red-500 ${colors.isDark ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-100 hover:bg-slate-200'} rounded-lg`}><Trash2 size={16}/></button></div>
                       </div>
-                      {/* GÜNCELLEME 1: Buton Stili ve İşlevi */}
-                      <Button className={`w-full ${isSelected ? '!bg-emerald-600 !text-white' : ''}`} variant={isSelected ? "primary" : "secondary"} onClick={() => handleSelectStudent(student.id)}>
-                          {isSelected ? (
-                              <><Check size={16}/> Seçildi</>
-                          ) : (
-                              <>Profile Git <ChevronRight size={16}/></>
-                          )}
-                      </Button>
+                      
+                      {/* BUTONLAR: SEÇ VE WHATSAPP */}
+                      <div className="flex gap-2">
+                        {/* GÜNCELLEME: WhatsApp Butonu */}
+                        <button onClick={(e) => handleWhatsApp(e, student.phone)} className={`px-3 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-colors flex items-center justify-center`} title="WhatsApp">
+                           <MessageCircle size={18} />
+                        </button>
+                        
+                        <Button className={`flex-1 ${isSelected ? '!bg-emerald-600 !text-white' : ''}`} variant={isSelected ? "primary" : "secondary"} onClick={() => handleSelectStudent(student.id)}>
+                            {isSelected ? (<><Check size={16}/> Seçildi</>) : (<>Profile Git <ChevronRight size={16}/></>)}
+                        </Button>
+                      </div>
                   </div>
               );
           })}
@@ -608,8 +627,11 @@ const DashboardModule = ({ user, students, setStudents, setSelectedStudentId, on
       </div>
       
       {showNotifModal && (<Modal title="Öğrencilerime Duyuru Yap" onClose={() => setShowNotifModal(false)}><div className="space-y-4"><div className="bg-orange-500/10 p-3 rounded text-orange-500 text-xs">Bu duyuru sadece sizin listenizde ekli olan öğrencilere gidecektir.</div><textarea className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg p-3 ${colors.text}`} rows={4} placeholder="Duyuru metni..." value={notifMsg} onChange={e => setNotifMsg(e.target.value)} /><Button onClick={handleSendTeacherNotif} className="w-full">Gönder</Button></div></Modal>)}
-      {showModal && (<Modal title={editingId ? "Öğrenci Düzenle" : "Yeni Öğrenci Ekle"} onClose={() => {setShowModal(false); setEditingId(null); setForm({ name: '', grade: '', target: '', phone: '', school: '', username: '', password: '', classId: '' });}}><div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Input label="Ad Soyad" value={form.name} onChange={e => setForm({...form, name: e.target.value})} /><Input label="Sınıf Düzeyi" value={form.grade} onChange={e => setForm({...form, grade: e.target.value})} /><div className="col-span-1 md:col-span-2"><label className={`block text-xs font-medium ${colors.textSec} mb-2 uppercase`}>Atanacak Sınıf</label><select className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg p-3 ${colors.text}`} value={form.classId} onChange={e => setForm({...form, classId: e.target.value})}><option value="">Sınıfsız</option>{classes && classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div><Input label="Hedef" value={form.target} onChange={e => setForm({...form, target: e.target.value})} /><Input label="Okul" value={form.school} onChange={e => setForm({...form, school: e.target.value})} /><Input label="Telefon" value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} /><div className={`col-span-1 md:col-span-2 p-4 ${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} rounded-lg border ${colors.border} mt-2`}><h4 className="text-orange-500 font-bold text-xs uppercase mb-3">Giriş Bilgileri</h4><div className="grid grid-cols-2 gap-4"><Input label="Kullanıcı Adı" value={form.username} onChange={e => setForm({...form, username: e.target.value})} /><Input label="Şifre" value={form.password} onChange={e => setForm({...form, password: e.target.value})} /></div></div><div className="col-span-1 md:col-span-2 pt-4"><Button size="large" className="w-full" onClick={handleSave}>Kaydet</Button></div></div></Modal>)}
-      {showClassModal && (<Modal title="Sınıf & Grup Yönetimi" onClose={() => setShowClassModal(false)}><div className="space-y-6"><div className="flex gap-2"><Input placeholder="Yeni Sınıf Adı" value={newClassName} onChange={e => setNewClassName(e.target.value)} className="mb-0 flex-1" /><Button onClick={handleAddClass} icon={Plus}>Ekle</Button></div><div className={`border ${colors.border} rounded-lg overflow-hidden`}><table className="w-full text-left text-sm"><thead className={colors.tableHeader}><tr><th className="p-3">Sınıf Adı</th><th className="p-3 text-right">İşlem</th></tr></thead><tbody className={`divide-y ${colors.divider}`}>{classes && classes.map(c => (<tr key={c.id} className={colors.hoverBg}><td className={`p-3 ${colors.text}`}>{c.name}</td><td className="p-3 text-right"><button onClick={() => handleDeleteClass(c.id)} className="text-slate-500 hover:text-red-500"><Trash2 size={16}/></button></td></tr>))}{(!classes || classes.length === 0) && <tr><td colSpan="2" className="p-4 text-center text-slate-500">Henüz sınıf oluşturulmadı.</td></tr>}</tbody></table></div></div></Modal>)}
+      {showModal && (<Modal title={editingId ? "Öğrenci Düzenle" : "Yeni Öğrenci Ekle"} onClose={() => {setShowModal(false); setEditingId(null); 
+      setForm({ name: '', grade: '', target: '', phone: '', school: '', username: '', password: '', classId: '' });}}><div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Input label="Ad Soyad" value={form.name} onChange={e => setForm({...form, name: e.target.value})} /><Input label="Sınıf Düzeyi" value={form.grade} onChange={e => setForm({...form, grade: e.target.value})} /><div className="col-span-1 md:col-span-2"><label className={`block text-xs font-medium ${colors.textSec} mb-2 uppercase`}>Atanacak Sınıf</label><select className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg p-3 ${colors.text}`} value={form.classId} onChange={e => setForm({...form, classId: e.target.value})}><option value="">Sınıfsız</option>{classes && classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div><Input label="Hedef" value={form.target} onChange={e => setForm({...form, target: e.target.value})} /><Input label="Okul" value={form.school} onChange={e => setForm({...form, school: e.target.value})} /><Input label="Telefon" value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} /><div className={`col-span-1 md:col-span-2 p-4 ${colors.isDark ?
+      'bg-slate-800' : 'bg-slate-100'} rounded-lg border ${colors.border} mt-2`}><h4 className="text-orange-500 font-bold text-xs uppercase mb-3">Giriş Bilgileri</h4><div className="grid grid-cols-2 gap-4"><Input label="Kullanıcı Adı" value={form.username} onChange={e => setForm({...form, username: e.target.value})} /><Input label="Şifre" value={form.password} onChange={e => setForm({...form, password: e.target.value})} /></div></div><div className="col-span-1 md:col-span-2 pt-4"><Button size="large" className="w-full" onClick={handleSave}>Kaydet</Button></div></div></Modal>)}
+      {showClassModal && (<Modal title="Sınıf & Grup Yönetimi" onClose={() => setShowClassModal(false)}><div className="space-y-6"><div className="flex gap-2"><Input placeholder="Yeni Sınıf Adı" value={newClassName} onChange={e => setNewClassName(e.target.value)} className="mb-0 flex-1" /><Button onClick={handleAddClass} icon={Plus}>Ekle</Button></div><div className={`border ${colors.border} rounded-lg overflow-hidden`}><table className="w-full text-left text-sm"><thead className={colors.tableHeader}><tr><th className="p-3">Sınıf Adı</th><th className="p-3 text-right">İşlem</th></tr></thead><tbody className={`divide-y ${colors.divider}`}>{classes && classes.map(c => (<tr key={c.id} className={colors.hoverBg}><td className={`p-3 ${colors.text}`}>{c.name}</td><td className="p-3 text-right"><button onClick={() => handleDeleteClass(c.id)} className="text-slate-500 hover:text-red-500"><Trash2 size={16}/></button></td></tr>))}{(!classes ||
+      classes.length === 0) && <tr><td colSpan="2" className="p-4 text-center text-slate-500">Henüz sınıf oluşturulmadı.</td></tr>}</tbody></table></div></div></Modal>)}
       <DeleteConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={confirmDelete} />
     </div>
   );
@@ -664,7 +686,7 @@ const LessonModule = ({ student, curriculum, setCurriculum, onUpdateStudent, use
   );
 };
 
-// 2. HAFTALIK PROGRAM (DÜZELTİLDİ: Tam Responsive - Mobil Kaydırma, Tablet/PC Grid)
+// 2. HAFTALIK PROGRAM (NİHAİ FİNAL SÜRÜM: Tema Uyumlu + Veri Korumalı)
 const ScheduleModule = ({ student, curriculum, onUpdateStudent, user, students, classes }) => {
   const activeCurriculum = student.curriculum || curriculum;
   const [form, setForm] = useState({ days: [], courseId: '', unitId: '', topic: '', type: 'soru', count: '', source: '', note: '' });
@@ -678,22 +700,53 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user, students, 
   const [selectedClassId, setSelectedClassId] = useState(student.classId || '');
   const colors = useThemeColors();
 
+  // --- AKILLI RENK SEÇİCİ (Hash Algoritması) ---
+  const getSubjectColorInfo = (subjectName) => {
+    const name = subjectName || ""; 
+    
+    // Canlı, ayırt edici renkler (Border ve Nokta için)
+    const palettes = [
+      { border: "border-l-blue-500", dot: "bg-blue-500" },
+      { border: "border-l-red-500", dot: "bg-red-500" },
+      { border: "border-l-emerald-500", dot: "bg-emerald-500" },
+      { border: "border-l-purple-500", dot: "bg-purple-500" },
+      { border: "border-l-orange-500", dot: "bg-orange-500" },
+      { border: "border-l-pink-500", dot: "bg-pink-500" },
+      { border: "border-l-cyan-500", dot: "bg-cyan-500" },
+      { border: "border-l-yellow-500", dot: "bg-yellow-500" },
+      { border: "border-l-indigo-500", dot: "bg-indigo-500" },
+      { border: "border-l-lime-500", dot: "bg-lime-500" },
+      { border: "border-l-rose-500", dot: "bg-rose-500" },
+      { border: "border-l-teal-500", dot: "bg-teal-500" }
+    ];
+
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const index = Math.abs(hash) % palettes.length;
+    return palettes[index];
+  };
+
   const selectedCourse = activeCurriculum.find(c => c.id === form.courseId);
   const selectedUnit = selectedCourse?.units.find(u => u.id === form.unitId);
   const availableResources = student.resources ? student.resources.filter(r => r.courseId === form.courseId) : [];
   const assignments = student.assignments || [];
-  
   const weeklySolvedQuestions = assignments.filter(a => (a.type === 'soru' || a.count) && a.status === 'completed').reduce((acc, curr) => acc + (parseInt(curr.count) || 0), 0);
   const weeklyTaskCount = assignments.length;
   const weeklyCompletedCount = assignments.filter(a => a.status === 'completed').length;
   const completionRate = weeklyTaskCount > 0 ? Math.round((weeklyCompletedCount / weeklyTaskCount) * 100) : 0;
   
-  const assignToStudent = (targetStudent, newAssignments) => { onUpdateStudent({ ...targetStudent, assignments: [...(targetStudent.assignments || []), ...newAssignments] }); };
+  const assignToStudent = (targetStudent, newAssignments) => { 
+      onUpdateStudent({ ...targetStudent, assignments: [...(targetStudent.assignments || []), ...newAssignments] });
+  };
 
+  // --- ANA ATAMA FONKSİYONU (GÜVENLİ) ---
   const handleAssign = async () => { 
-      if(!form.courseId || !form.topic) return alert("Lütfen ders ve konu seçiniz."); 
+      if(!form.courseId || !form.topic) return alert("Lütfen ders ve konu seçiniz.");
       if(form.days.length === 0) return alert("En az bir gün seçiniz.");
       
+      // Eklenecek ödev listesini hazırla
       const assignmentsToAdd = [];
       form.days.forEach((day, index) => { 
           assignmentsToAdd.push({ 
@@ -702,28 +755,57 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user, students, 
               subject: selectedCourse.name, 
               ...form, 
               day 
-          }); 
+           }); 
       });
 
       if (assignToClass && selectedClassId) {
+          // TOPLU ATAMA
           if(!window.confirm(`Bu ödev sınıftaki tüm öğrencilere eklenecek.`)) return;
           const classStudents = students.filter(s => s.classId === selectedClassId);
           for (const s of classStudents) {
               const sAssignments = assignmentsToAdd.map((a, i) => ({...a, id: Date.now() + Math.random() + i}));
-              if(isFirebaseActive) { await setDoc(doc(db, "students", s.id), { assignments: [...(s.assignments || []), ...sAssignments] }, { merge: true }); } 
+              if(isFirebaseActive) { 
+                 try {
+                      await updateDoc(doc(db, "students", s.id), { assignments: arrayUnion(...sAssignments) });
+                  } catch(e) { console.error(e); }
+              } 
               else { assignToStudent(s, sAssignments); }
           }
           alert("Toplu atama yapıldı.");
       } else {
-          let newAssignments = [...assignments];
-          if (editingId) { const day = form.days[0]; newAssignments = newAssignments.map(a => a.id === editingId ? { ...a, ...form, day, subject: selectedCourse.name } : a); onUpdateStudent({ ...student, assignments: newAssignments }); } 
-          else { onUpdateStudent({ ...student, assignments: [...assignments, ...assignmentsToAdd] }); }
+          // TEKİL ÖĞRENCİ (EKLEME / DÜZENLEME)
+          if (editingId) { 
+              // DÜZENLEME: Önce eskiyi sil, sonra yeni günlere ekle (Çoğaltma/Taşıma Sorununu Çözer)
+              const remainingAssignments = assignments.filter(a => a.id !== editingId);
+              const finalAssignments = [...remainingAssignments, ...assignmentsToAdd];
+
+              if (isFirebaseActive) {
+                  try {
+                      // Düzenlemede arrayUnion yerine tüm listeyi güncelliyoruz ki eskisi silinsin
+                      await updateDoc(doc(db, "students", student.id), { assignments: finalAssignments });
+                  } catch(e) { console.error(e); alert("Güncelleme hatası."); }
+              } else {
+                  onUpdateStudent({ ...student, assignments: finalAssignments }); 
+              }
+          } 
+          else { 
+               // YENİ EKLEME
+               if(isFirebaseActive) {
+                  try {
+                      await updateDoc(doc(db, "students", student.id), { assignments: arrayUnion(...assignmentsToAdd) });
+                  } catch(e) { console.error(e); alert("Hata oluştu."); }
+               } else {
+                  onUpdateStudent({ ...student, assignments: [...assignments, ...assignmentsToAdd] });
+               }
+          }
       }
-      setForm(prev => ({ ...prev, count: '', source: '', unitId: '', topic: '', note: '', days: [] })); 
+      setForm(prev => ({ ...prev, count: '', source: '', unitId: '', topic: '', note: '', days: [] }));
+      setEditingId(null);
   };
   
   const handleQuickAssign = async () => {
-    if(!quickForm.text) return alert("Görev giriniz."); if(quickForm.days.length === 0) return alert("Gün seçiniz.");
+    if(!quickForm.text) return alert("Görev giriniz.");
+    if(quickForm.days.length === 0) return alert("Gün seçiniz.");
     const assignmentsToAdd = [];
     quickForm.days.forEach((day, index) => { 
         assignmentsToAdd.push({ 
@@ -737,22 +819,42 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user, students, 
             source: quickForm.source 
         }); 
     });
-    
+
     if (assignToClass && selectedClassId) {
         if(!window.confirm(`Toplu atama yapılsın mı?`)) return;
         const classStudents = students.filter(s => s.classId === selectedClassId);
         for (const s of classStudents) {
             const sAssignments = assignmentsToAdd.map((a, i) => ({...a, id: Date.now() + Math.random() + i}));
-            if(isFirebaseActive) await setDoc(doc(db, "students", s.id), { assignments: [...(s.assignments || []), ...sAssignments] }, { merge: true });
+            if(isFirebaseActive) {
+                 try { await updateDoc(doc(db, "students", s.id), { assignments: arrayUnion(...sAssignments) }); } catch(e){}
+            }
             else assignToStudent(s, sAssignments);
         }
-    } else { onUpdateStudent({ ...student, assignments: [...assignments, ...assignmentsToAdd] }); }
-    setShowQuickModal(false); setQuickForm({ text: '', days: [], count: '', source: '' });
+    } else { 
+        if(isFirebaseActive) {
+             try { await updateDoc(doc(db, "students", student.id), { assignments: arrayUnion(...assignmentsToAdd) }); } catch(e){}
+        } else {
+             onUpdateStudent({ ...student, assignments: [...assignments, ...assignmentsToAdd] }); 
+        }
+    }
+    setShowQuickModal(false);
+    setQuickForm({ text: '', days: [], count: '', source: '' });
   };
 
-  const handleEdit = (task) => { const course = activeCurriculum.find(c => c.name === task.subject); setForm({ days: [task.day], courseId: course ? course.id : '', unitId: task.unitId || '', topic: task.topic, type: task.type, count: task.count, source: task.source || '', note: task.note || '' }); setEditingId(task.id); window.scrollTo(0,0); };
+  const handleEdit = (task) => { 
+      const course = activeCurriculum.find(c => c.name === task.subject);
+      setForm({ days: [task.day], courseId: course ? course.id : '', unitId: task.unitId || '', topic: task.topic, type: task.type, count: task.count, source: task.source || '', note: task.note || '' });
+      setEditingId(task.id); window.scrollTo(0,0); 
+  };
   const handleCancelEdit = () => { setEditingId(null); setForm(prev => ({ ...prev, count: '', source: '', unitId: '', topic: '', note: '', days: [] })); };
-  const toggleTaskStatus = (id) => { const updated = assignments.map(a => a.id === id ? { ...a, status: a.status === 'completed' ? 'pending' : 'completed' } : a); let newStats = { ...student.stats }; const task = assignments.find(a => a.id === id); if (task && task.status !== 'completed') { newStats.xp = (newStats.xp || 0) + 50; newStats.level = Math.floor(newStats.xp / 1000) + 1; } onUpdateStudent({ ...student, assignments: updated, stats: newStats }); };
+  
+  const toggleTaskStatus = (id) => { 
+      const updated = assignments.map(a => a.id === id ? { ...a, status: a.status === 'completed' ? 'pending' : 'completed' } : a);
+      let newStats = { ...student.stats }; const task = assignments.find(a => a.id === id);
+      if (task && task.status !== 'completed') { newStats.xp = (newStats.xp || 0) + 50; newStats.level = Math.floor(newStats.xp / 1000) + 1; } 
+      onUpdateStudent({ ...student, assignments: updated, stats: newStats }); 
+  };
+  
   const requestDelete = (e, id) => { e.stopPropagation(); e.preventDefault(); setDeleteConfirm(id); };
   const confirmDelete = () => { if (deleteConfirm) { const filtered = assignments.filter(a => a.id !== deleteConfirm); onUpdateStudent({ ...student, assignments: filtered }); setDeleteConfirm(null); } };
   const handleDeleteArchive = (weekId) => { if(window.confirm("Arşiv silinsin mi?")) { const updatedArchives = student.pastWeeks.filter(w => w.id !== weekId); onUpdateStudent({ ...student, pastWeeks: updatedArchives }); } };
@@ -760,20 +862,11 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user, students, 
   const handleResetSchedule = () => { 
       const weekName = prompt("Arşivlenecek hafta için bir isim giriniz:", `${new Date().toLocaleDateString('tr-TR')} Haftası`);
       if (!weekName) return; 
-
       if(window.confirm("Program arşive alınıp sıfırlansın mı?")) { 
-          const newTotalSolved = (student.stats?.totalSolved || 0) + weeklySolvedQuestions; 
+          const newTotalSolved = (student.stats?.totalSolved || 0) + weeklySolvedQuestions;
           const newMonthlySolved = (student.stats?.monthlySolved || 0) + weeklySolvedQuestions; 
-          
-          const archivedWeek = { 
-              id: Date.now(), 
-              name: weekName,
-              date: new Date().toLocaleDateString('tr-TR'), 
-              assignments: [...assignments], 
-              solvedCount: weeklySolvedQuestions 
-          }; 
-          
-          onUpdateStudent({ ...student, assignments: [], pastWeeks: [archivedWeek, ...(student.pastWeeks || [])], stats: { ...student.stats, totalSolved: newTotalSolved, monthlySolved: newMonthlySolved } }); 
+          const archivedWeek = { id: Date.now(), name: weekName, date: new Date().toLocaleDateString('tr-TR'), assignments: [...assignments], solvedCount: weeklySolvedQuestions }; 
+          onUpdateStudent({ ...student, assignments: [], pastWeeks: [archivedWeek, ...(student.pastWeeks || [])], stats: { ...student.stats, totalSolved: newTotalSolved, monthlySolved: newMonthlySolved } });
       } 
   };
   
@@ -811,39 +904,72 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user, students, 
         </Card>
       )}
       
-      {/* responsive düzenleme:
-          - Mobilde: flex & overflow-x-auto (yan yana kaydırmalı)
-          - Tablet (md): grid-cols-2 (2 sütunlu ızgara)
-          - Laptop (lg): grid-cols-3 (3 sütunlu ızgara)
-          - Geniş (xl): grid-cols-4 veya duruma göre 7
-      */}
-      {/* GÖRÜNÜM GÜNCELLEMESİ: Tablette de kaydırma devam etsin, sadece çok geniş ekranda grid olsun */}
-      {/* Değişiklik: 'md:grid' kaldırıldı, yerine '2xl:grid' eklendi. Artık çoğu ekranda kaydırmalı olacak. */}
       <div className={`flex overflow-x-auto pb-4 gap-4 snap-x snap-mandatory 2xl:grid 2xl:grid-cols-7 2xl:overflow-visible custom-scrollbar`}>
           {DAYS.map(day => { 
               const dayTasks = assignments.filter(a => a.day === day.id); 
               const stats = getDailyStats(day.id); 
               return (
-                <div key={day.id} className={`min-w-[85vw] sm:min-w-[45vw] md:min-w-[30vw] lg:min-w-[22vw] 2xl:min-w-0 snap-center ${colors.bgCardTransparent} border ${colors.border} rounded-xl flex flex-col h-full min-h-[300px]`}>
+                 <div key={day.id} className={`min-w-[85vw] sm:min-w-[45vw] md:min-w-[30vw] lg:min-w-[22vw] 2xl:min-w-0 snap-center ${colors.bgCardTransparent} border ${colors.border} rounded-xl flex flex-col h-full min-h-[300px]`}>
                     <div className={`p-3 border-b ${colors.border} ${colors.bgCard} rounded-t-xl text-center`}><span className={`font-bold ${colors.text} text-sm`}>{day.label}</span><span className={`block text-xs ${colors.textSec}`}>{dayTasks.length} Görev</span></div>
+                    
                     <div className="p-2 space-y-2 flex-1">
-                        {dayTasks.map(task => (
-                            <div key={task.id} className={`p-3 rounded-lg border text-xs group relative ${colors.shadow} ${task.status === 'completed' ? 'bg-emerald-900/20 border-emerald-900/50 opacity-75' : `${colors.bgCard} ${colors.border}`}`}>
-                                <div className="flex justify-between items-start">
-                                    <span className="font-bold text-orange-400 truncate w-full pr-12">{task.subject}</span>
-                                    {(isAdmin && isEditMode) && (<div className={`flex gap-1 absolute right-2 top-2 z-10 ${colors.isDark ? 'bg-slate-800/80' : 'bg-white/80'} p-1 rounded backdrop-blur-sm shadow-sm border ${colors.border}`}><button onClick={(e) => {e.stopPropagation(); handleEdit(task)}} className={`text-slate-400 hover:text-blue-400 p-2`}><Edit2 size={12}/></button><button onClick={(e) => requestDelete(e, task.id)} className="text-slate-400 hover:text-red-500 p-2"><Trash2 size={12}/></button></div>)}
+                        {/* GÜNCELLEME: Tema Uyumluluğu ve Renk Ayrımı Koruma */}
+                        {dayTasks.sort((a,b) => a.id - b.id).map(task => {
+                            const colorInfo = getSubjectColorInfo(task.subject); 
+                            const isCompleted = task.status === 'completed';
+
+                            return (
+                                <div key={task.id} className={`p-3 rounded-lg border text-xs group relative ${colors.shadow} transition-all hover:brightness-110
+                                    ${colors.border} 
+                                    border-l-4 ${colorInfo.border} 
+                                    ${isCompleted ? 'bg-emerald-900/20 opacity-75' : colors.bgCard} 
+                                `}>
+                                    
+                                    <div className="flex justify-between items-start mb-1">
+                                        <div className="flex items-center gap-2 w-full pr-8">
+                                            {/* Renkli Nokta */}
+                                            <div className={`w-2 h-2 rounded-full shrink-0 ${colorInfo.dot} ${isCompleted ? 'opacity-50' : ''}`}></div>
+                                            
+                                            {/* DERS BAŞLIĞI: Tema Değişkeni Kullanıldı */}
+                                            {/* colors.text = Dark'ta Beyaz, Light'ta Siyah olur */}
+                                            <span className={`font-bold text-sm truncate ${isCompleted ? 'text-emerald-500' : colors.text}`}>
+                                                {task.subject}
+                                            </span>
+                                        </div>
+                                        
+                                        {(isAdmin && isEditMode) && (
+                                            <div className={`flex gap-1 absolute right-2 top-2 z-10 ${colors.isDark ? 'bg-slate-800/80' : 'bg-white/80'} p-1 rounded backdrop-blur-sm shadow-sm border ${colors.border}`}>
+                                                <button onClick={(e) => {e.stopPropagation(); handleEdit(task)}} className={`text-slate-400 hover:text-blue-400 p-2`}><Edit2 size={12}/></button>
+                                                <button onClick={(e) => requestDelete(e, task.id)} className="text-slate-400 hover:text-red-500 p-2"><Trash2 size={12}/></button>
+                                            </div>
+                                        )}
+                                    </div>
+                  
+                                    {/* KONU */}
+                                    <div className={`mt-1 text-sm font-medium line-clamp-2 ${isCompleted ? 'text-emerald-500/70' : colors.textSec}`}>{task.topic}</div>
+                                    
+                                    <div className="mt-3 flex flex-col gap-2">
+                                        <div className="flex justify-between items-center text-xs">
+                                            <span className={`${colors.isDark ? 'bg-slate-700/50 text-slate-400' : 'bg-slate-200 text-slate-600'} px-2 py-0.5 rounded`}>
+                                                {TASK_TYPES.find(t=>t.id === task.type)?.label}
+                                            </span>
+                                            {task.count && <span className={`font-bold ${isCompleted ? 'text-emerald-600' : 'text-orange-400'}`}>{task.count} Soru</span>}
+                                        </div>
+                                        {task.source && (<div className="flex items-center gap-1 text-xs text-blue-400"><Book size={10} /><span className="truncate">{task.source}</span></div>)}
+                                    </div>
+          
+                                    {task.note && (<div className={`mt-2 pt-2 border-t ${colors.border} text-[10px] ${colors.textSec} italic`}>Not: <span className={colors.textSec}>{task.note}</span></div>)}
+                                    
+                                    <button onClick={() => toggleTaskStatus(task.id)} className={`mt-3 w-full py-2 rounded flex items-center justify-center gap-1 transition-colors ${isCompleted ?
+                                        'bg-emerald-600 text-white shadow-lg shadow-emerald-900/20' : `${colors.isDark ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-100 hover:bg-slate-200'} ${colors.textSec} hover:text-white border ${colors.border}`}`}>
+                                        {isCompleted ? <Check size={14}/> : 'Tamamla'}
+                                    </button>
                                 </div>
-                                <div className={`${colors.text} mt-1 text-sm font-medium line-clamp-2`}>{task.topic}</div>
-                                <div className="mt-2 flex flex-col gap-1">
-                                    <div className={`flex justify-between items-center text-xs ${colors.textSec}`}><span className={`${colors.isDark ? 'bg-slate-700/50' : 'bg-slate-200'} px-1.5 py-0.5 rounded`}>{TASK_TYPES.find(t=>t.id === task.type)?.label}</span>{task.count && <span className="font-bold text-orange-400">{task.count} Soru</span>}</div>
-                                    {task.source && (<div className="flex items-center gap-1 text-xs text-blue-400 mt-0.5"><Book size={10} /><span className="truncate">{task.source}</span></div>)}
-                                </div>
-                                {task.note && (<div className={`mt-2 pt-2 border-t ${colors.border} text-[10px] ${colors.textSec} italic`}>Not: <span className={colors.text}>{task.note}</span></div>)}
-                                <button onClick={() => toggleTaskStatus(task.id)} className={`mt-2 w-full py-2 rounded flex items-center justify-center gap-1 ${task.status === 'completed' ? 'bg-emerald-600 text-white' : `${colors.isDark ? 'bg-slate-700 text-slate-400 hover:bg-slate-600' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'}`}`}>{task.status === 'completed' ? <Check size={14}/> : 'Tamamla'}</button>
-                            </div>
-                        ))}
+                            );
+                        })}
                         {dayTasks.length === 0 && <div className={`text-center py-8 ${colors.textSec} text-xs`}>Boş Gün</div>}
                     </div>
+
                     <div className={`p-3 ${colors.isDark ? 'bg-slate-900/80' : 'bg-white/80'} border-t ${colors.border} rounded-b-xl text-[10px] space-y-1`}>
                         <div className={`flex justify-between ${colors.textSec}`}><span>Konu:</span> <span className={`${colors.text} font-bold`}>{stats.topic}</span></div>
                         <div className={`flex justify-between ${colors.textSec}`}><span>Soru:</span> <span className="text-orange-400 font-bold">{stats.question}</span></div>
@@ -863,7 +989,7 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user, students, 
         <Card title="Geçmiş Haftalar Arşivi" className="mt-8">
             <div className="space-y-4">
                 {student.pastWeeks.map(week => (
-                    <div key={week.id} className={`${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} rounded-lg overflow-hidden`}>
+                  <div key={week.id} className={`${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} rounded-lg overflow-hidden`}>
                         <div className="p-4 flex justify-between items-center cursor-pointer" onClick={() => setExpandedArchive(expandedArchive === week.id ? null : week.id)}>
                             <div className="flex items-center gap-3">
                                 {expandedArchive === week.id ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
@@ -882,7 +1008,7 @@ const ScheduleModule = ({ student, curriculum, onUpdateStudent, user, students, 
                                       return (<div key={day.id} className={`min-w-[150px] md:min-w-0 ${colors.bgCardTransparent} border ${colors.border} rounded-xl flex flex-col h-full opacity-90`}><div className={`p-2 border-b ${colors.border} ${colors.bgCard} rounded-t-xl text-center`}><span className={`font-bold ${colors.text} text-xs`}>{day.label}</span></div><div className="p-2 space-y-2 flex-1 min-h-[80px]">{dayTasks.map(task => (<div key={task.id} className={`p-2 rounded-lg border text-[10px] ${colors.shadow} ${task.status === 'completed' ? 'bg-emerald-900/10 border-emerald-500/30' : `${colors.bgCard} ${colors.border}`}`}><div className="font-bold text-orange-400 truncate">{task.subject}</div><div className={`${colors.text} line-clamp-2 mb-1`}>{task.topic}</div><div className={`flex justify-between items-center ${colors.textSec}`}><span>{TASK_TYPES.find(t=>t.id === task.type)?.label}</span>{task.status === 'completed' ? <Check size={12} className="text-emerald-500"/> : <span className="text-red-400 text-[9px] font-bold">X</span>}</div>{task.count && task.type === 'soru' && <div className="text-orange-500 font-bold mt-1">{task.count} Soru</div>}</div>))}{dayTasks.length === 0 && <div className={`text-center py-4 ${colors.textSec} text-[10px]`}>-</div>}</div></div>)
                                   })}
                               </div>
-                          </div>
+                           </div>
                         )}
                     </div>
                 ))}
@@ -1572,8 +1698,15 @@ const PaymentModule = ({ student, onUpdateStudent, user }) => {
   );
 };
 
-// --- LANDING PAGE (KARŞILAMA EKRANI) ---
+// --- LANDING PAGE (GÜNCELLENDİ: WhatsApp Logolu) ---
 const LandingPage = ({ onGoToLogin }) => {
+  // WhatsApp SVG İkonu (Orijinal Görünüm İçin)
+  const WhatsAppIcon = () => (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" className="inline-block">
+      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.008-.57-.008-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+    </svg>
+  );
+
   return (
     <div className="min-h-screen bg-slate-950 text-white font-sans selection:bg-orange-500 selection:text-white">
       {/* Header */}
@@ -1600,15 +1733,15 @@ const LandingPage = ({ onGoToLogin }) => {
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-orange-400 to-red-500">Dijital Yol Arkadaşın</span>
           </h1>
           <p className="text-slate-400 text-lg md:text-xl leading-relaxed max-w-xl">
-            Öğrenci takibi, analizler, yapay zeka destekli raporlamalar ve çok daha fazlası. 
-            Koçum Online ile potansiyelini keşfet.
+            Öğrenci takibi, analizler, yapay zeka destekli raporlamalar ve çok daha fazlası. Koçum Online ile potansiyelini keşfet.
           </p>
           <div className="flex gap-4 pt-4">
             <button onClick={onGoToLogin} className="px-8 py-4 bg-orange-600 hover:bg-orange-700 rounded-xl font-bold text-white shadow-lg shadow-orange-500/25 transition-all flex items-center gap-2">
               Hemen Başla <ChevronRight size={20}/>
             </button>
-            <a href="https://wa.me/905419706821" target="_blank" rel="noreferrer" className="px-8 py-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl font-bold text-white transition-all flex items-center gap-2">
-              <Phone size={20} className="text-green-500"/> İletişim
+            {/* GÜNCELLEME: WhatsApp Butonu */}
+            <a href="https://wa.me/905419706821" target="_blank" rel="noreferrer" className="px-8 py-4 bg-emerald-600 hover:bg-emerald-700 border border-emerald-600 rounded-xl font-bold text-white transition-all flex items-center gap-2 shadow-lg shadow-emerald-500/20">
+              <WhatsAppIcon /> WhatsApp
             </a>
           </div>
         </div>
@@ -1668,7 +1801,7 @@ const LandingPage = ({ onGoToLogin }) => {
 
       {/* Footer / Contact */}
       <footer className="bg-slate-900 border-t border-slate-800 py-12">
-        <div className="container mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
+         <div className="container mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
            <div className="text-center md:text-left">
               <h4 className="font-bold text-lg mb-1">Koçum Online</h4>
               <p className="text-slate-500 text-sm">Tüm Hakları Saklıdır © 2025</p>
@@ -1678,8 +1811,8 @@ const LandingPage = ({ onGoToLogin }) => {
                  <div className="p-2 bg-slate-800 rounded-lg"><User size={18}/></div>
                  <span>@kocum.onlinee</span>
               </a>
-              <a href="https://wa.me/905419706821" target="_blank" rel="noreferrer" className="flex items-center gap-2 text-slate-400 hover:text-green-500 transition-colors">
-                 <div className="p-2 bg-slate-800 rounded-lg"><Phone size={18}/></div>
+              <a href="https://wa.me/905419706821" target="_blank" rel="noreferrer" className="flex items-center gap-2 text-slate-400 hover:text-emerald-500 transition-colors">
+                 <div className="p-2 bg-slate-800 rounded-lg"><WhatsAppIcon /></div>
                  <span>0541 970 68 21</span>
               </a>
            </div>
@@ -1689,21 +1822,33 @@ const LandingPage = ({ onGoToLogin }) => {
   );
 };
 
-//// --- LOGIN SCREEN ---
+// --- LOGIN SCREEN (GÜNCELLENDİ: Kayıt Ol Modülü Eklendi) ---
 const LoginScreen = ({ onLogin, students, admins, isFirebase, isLoading }) => {
-  const [activeTab, setActiveTab] = useState('admin');
-  const [password, setPassword] = useState('');
-  const [username, setUsername] = useState('');
-  const [error, setError] = useState('');
+  // Ekran Modu: 'login' veya 'register'
+  const [mode, setMode] = useState('login'); 
+  const [activeTab, setActiveTab] = useState('admin'); // Giriş yaparken rol seçimi
   
+  // Giriş Formu
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  
+  // Kayıt Formu
+  const [regForm, setRegForm] = useState({ name: '', phone: '', username: '', password: '' });
+
+  const [error, setError] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
+
+  // --- GİRİŞ YAPMA FONKSİYONU ---
   const handleLogin = () => {
     setError('');
+    setSuccessMsg('');
+
     if (activeTab === 'admin') {
       const adminUser = admins.find(a => a.username === username && a.password === password);
       if (adminUser) { 
         const role = adminUser.role === 'superadmin' ? 'superadmin' : 'admin';
         onLogin({ role: role, id: adminUser.id, name: adminUser.name, username: adminUser.username, password: adminUser.password }); 
-        return; 
+        return;
       }
       setError('Hatalı yönetici bilgisi.');
     } else {
@@ -1713,18 +1858,131 @@ const LoginScreen = ({ onLogin, students, admins, isFirebase, isLoading }) => {
     }
   };
 
+  // --- KAYIT OLMA FONKSİYONU ---
+  const handleRegister = async () => {
+    setError('');
+    setSuccessMsg('');
+
+    // 1. Boş Alan Kontrolü
+    if (!regForm.name || !regForm.phone || !regForm.username || !regForm.password) {
+      return setError("Lütfen tüm alanları doldurunuz.");
+    }
+
+    // 2. Kullanıcı Adı Çakışma Kontrolü (Benzersizlik)
+    const adminExists = admins.some(a => a.username === regForm.username);
+    const studentExists = students.some(s => s.username === regForm.username);
+
+    if (adminExists || studentExists) {
+      return setError("Bu kullanıcı adı başkası tarafından alınmış. Lütfen başka bir tane seçiniz.");
+    }
+
+    // 3. Tarih ve Limit Ayarlamaları (15 Gün Deneme + 5 Öğrenci)
+    const today = new Date();
+    const trialEndDate = new Date(today);
+    trialEndDate.setDate(today.getDate() + 15); // Bugüne 15 gün ekle
+
+    const startDateStr = today.toISOString().split('T')[0];
+    const endDateStr = trialEndDate.toISOString().split('T')[0];
+
+    // 4. Yeni Kullanıcı Objesi
+    const newAdminUser = {
+      // ID'yi Firebase yoksa timestamp yap, Firebase varsa o halleder ama yine de verelim
+      name: regForm.name,
+      username: regForm.username,
+      password: regForm.password,
+      phone: regForm.phone,
+      role: 'admin',         // Yeni kayıt olan herkes 'admin' (Öğretmen) olur
+      studentLimit: 5,       // 5 Öğrenci hakkı
+      startDate: startDateStr,
+      endDate: endDateStr    // 15 Günlük süre
+    };
+
+    // 5. Kaydetme İşlemi
+    if (isFirebase) {
+      try {
+        await addDoc(collection(db, "admins"), newAdminUser);
+        setSuccessMsg("Kayıt başarılı! Şimdi giriş yapabilirsiniz.");
+        // Formu temizle ve Giriş ekranına yönlendir
+        setRegForm({ name: '', phone: '', username: '', password: '' });
+        setTimeout(() => {
+           setMode('login');
+           setUsername(newAdminUser.username); // Kolaylık olsun diye kullanıcı adını doldur
+           setPassword(''); 
+        }, 1500);
+      } catch (e) {
+        console.error(e);
+        setError("Kayıt sırasında bir hata oluştu: " + e.message);
+      }
+    } else {
+      // Demo modu (Firebase yoksa) - Bellekteki listeyi güncellemek için App.js'in state'ine müdahale edemeyiz buradan direkt.
+      // Ama demo modunda olduğumuzu varsayarak kullanıcıya uyarı verebiliriz veya local işlem simüle edebiliriz.
+      // Not: Gerçek senaryoda App.js içindeki setAdmins buraya props olarak gelmeliydi ama
+      // Firebase aktif değilse sadece alert verelim.
+      alert("Demo modunda kayıt işlemi simüle edilmiştir. Sayfa yenilenince kaybolur.");
+      setMode('login');
+    }
+  };
+
   if (isLoading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center"><div className="text-orange-500 font-bold animate-pulse">Sistem Yükleniyor...</div></div>;
 
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4"><div className="bg-slate-900 p-8 rounded-2xl w-full max-w-md border border-slate-800 shadow-2xl relative">
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
+      <div className="bg-slate-900 p-8 rounded-2xl w-full max-w-md border border-slate-800 shadow-2xl relative">
+        
+        {/* Firebase Durum Göstergesi */}
         {!isFirebase && <div className="absolute top-2 right-2 bg-yellow-500/20 text-yellow-500 text-[10px] px-2 py-1 rounded border border-yellow-500/30 flex items-center gap-1"><CloudOff size={12}/> Demo Modu</div>}
         {isFirebase && <div className="absolute top-2 right-2 bg-emerald-500/20 text-emerald-500 text-[10px] px-2 py-1 rounded border border-emerald-500/30 flex items-center gap-1"><Cloud size={12}/> Canlı Bağlantı</div>}
-        <div className="text-center mb-8">
-            {/* GÜNCELLEME 3: Marka İsmi Değişti */}
+        
+        <div className="text-center mb-6">
             <h1 className="text-2xl font-bold text-white mb-2">Koçum Online</h1>
             <p className="text-slate-500 text-xs">Profesyonel Öğrenci Takip Sistemi</p>
         </div>
-        <div className="flex bg-slate-800 p-1 rounded-lg mb-6"><button onClick={() => {setActiveTab('admin'); setError(''); setPassword('');}} className={`flex-1 py-2 rounded-md text-sm font-bold transition-all ${activeTab === 'admin' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`}>Yönetici / Öğretmen</button><button onClick={() => {setActiveTab('student'); setError(''); setPassword('');}} className={`flex-1 py-2 rounded-md text-sm font-bold transition-all ${activeTab === 'student' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`}>Öğrenci</button></div><div className="space-y-4"><Input label="Kullanıcı Adı" value={username} onChange={e => setUsername(e.target.value)} /><Input label="Şifre" type="password" placeholder="••••••" value={password} onChange={e => setPassword(e.target.value)} />{error && <div className="p-3 bg-red-500/10 border border-red-500/20 rounded text-red-400 text-sm text-center">{error}</div>}<Button size="large" className="w-full" onClick={handleLogin}>Giriş Yap</Button></div></div></div>
+
+        {/* Sekmeler (Giriş Yap / Kayıt Ol) */}
+        <div className="flex bg-slate-800 p-1 rounded-lg mb-6">
+            <button onClick={() => { setMode('login'); setError(''); setSuccessMsg(''); }} className={`flex-1 py-2 rounded-md text-sm font-bold transition-all ${mode === 'login' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`}>Giriş Yap</button>
+            <button onClick={() => { setMode('register'); setError(''); setSuccessMsg(''); }} className={`flex-1 py-2 rounded-md text-sm font-bold transition-all ${mode === 'register' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'}`}>Kayıt Ol</button>
+        </div>
+
+        {/* MOD: GİRİŞ YAP */}
+        {mode === 'login' && (
+            <div className="space-y-4 animate-fade-in">
+                <div className="flex bg-slate-800/50 p-1 rounded-lg mb-2">
+                    <button onClick={() => {setActiveTab('admin'); setError('');}} className={`flex-1 py-1.5 rounded text-xs font-bold transition-all ${activeTab === 'admin' ? 'bg-slate-700 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}>Öğretmen</button>
+                    <button onClick={() => {setActiveTab('student'); setError('');}} className={`flex-1 py-1.5 rounded text-xs font-bold transition-all ${activeTab === 'student' ? 'bg-slate-700 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}>Öğrenci</button>
+                </div>
+
+                <Input label="Kullanıcı Adı" value={username} onChange={e => setUsername(e.target.value)} />
+                <Input label="Şifre" type="password" placeholder="••••••" value={password} onChange={e => setPassword(e.target.value)} />
+                
+                {error && <div className="p-3 bg-red-500/10 border border-red-500/20 rounded text-red-400 text-sm text-center flex items-center justify-center gap-2"><Shield size={14}/> {error}</div>}
+                {successMsg && <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded text-emerald-400 text-sm text-center flex items-center justify-center gap-2"><CheckCircle size={14}/> {successMsg}</div>}
+                
+                <Button size="large" className="w-full" onClick={handleLogin}>Giriş Yap</Button>
+            </div>
+        )}
+
+        {/* MOD: KAYIT OL */}
+        {mode === 'register' && (
+            <div className="space-y-4 animate-fade-in">
+                <div className="bg-blue-500/10 border border-blue-500/20 p-3 rounded text-blue-400 text-xs text-center mb-4">
+                    Kayıt olduğunuzda <b>15 Günlük Deneme Sürümü</b> ve <b>5 Öğrenci Kotası</b> hesabınıza otomatik tanımlanacaktır.
+                </div>
+
+                <Input label="Ad Soyad" placeholder="Adınız Soyadınız" value={regForm.name} onChange={e => setRegForm({...regForm, name: e.target.value})} />
+                <Input label="Telefon" placeholder="05XX XXX XX XX" value={regForm.phone} onChange={e => setRegForm({...regForm, phone: e.target.value})} />
+                <Input label="Kullanıcı Adı" placeholder="Benzersiz bir kullanıcı adı" value={regForm.username} onChange={e => setRegForm({...regForm, username: e.target.value})} />
+                <Input label="Şifre" type="password" placeholder="Güçlü bir şifre belirleyin" value={regForm.password} onChange={e => setRegForm({...regForm, password: e.target.value})} />
+
+                {error && <div className="p-3 bg-red-500/10 border border-red-500/20 rounded text-red-400 text-sm text-center">{error}</div>}
+                {successMsg && <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded text-emerald-400 text-sm text-center">{successMsg}</div>}
+
+                <Button size="large" className="w-full bg-emerald-600 hover:bg-emerald-700" onClick={handleRegister}>Ücretsiz Kayıt Ol</Button>
+            </div>
+        )}
+
+      </div>
+    </div>
   );
 };
 
@@ -1954,13 +2212,57 @@ const MainApp = () => {
 };
 
 // MainApp bileşeni bittikten hemen sonra bunu ekle:
+// --- TOAST BİLDİRİM BİLEŞENİ ---
+const ToastContainer = ({ toasts, removeToast }) => (
+  <div className="fixed top-4 right-4 z-[9999] space-y-2 pointer-events-none">
+    {toasts.map(t => (
+      <div key={t.id} className={`pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-lg shadow-xl text-white transform transition-all duration-300 animate-fade-in ${t.type === 'success' ? 'bg-emerald-600' : 'bg-red-600'}`}>
+        {t.type === 'success' ? <CheckCircle size={18}/> : <Shield size={18}/>}
+        <span className="text-sm font-medium">{t.msg}</span>
+      </div>
+    ))}
+  </div>
+);
+
+// --- APP ANA BİLEŞEN (Tema Hafızası & Toast Sağlayıcı) ---
 export default function App() {
-  const [theme, setTheme] = useState('dark');
-  const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
-  
+  // 1. Tema Hafızası
+  const [theme, setTheme] = useState(() => {
+    if (typeof window !== 'undefined') return localStorage.getItem('app-theme') || 'dark';
+    return 'dark';
+  });
+
+  // 2. Toast State
+  const [toasts, setToasts] = useState([]);
+
+  const addToast = (msg, type = 'success') => {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, msg, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 3000); // 3 Saniye sonra kaybolur
+  };
+
+  // Toast fonksiyonunu global yapıyoruz (Hack: Kolay entegrasyon için)
+  useEffect(() => {
+    window.toast = {
+      success: (msg) => addToast(msg, 'success'),
+      error: (msg) => addToast(msg, 'error')
+    };
+  }, []);
+
+  const toggleTheme = () => {
+    setTheme(prev => {
+      const newTheme = prev === 'dark' ? 'light' : 'dark';
+      localStorage.setItem('app-theme', newTheme);
+      return newTheme;
+    });
+  };
+
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme }}>
+      <ToastContainer toasts={toasts} removeToast={(id) => setToasts(prev => prev.filter(t => t.id !== id))} />
       <MainApp />
     </ThemeContext.Provider>
   );
-    }
+}
