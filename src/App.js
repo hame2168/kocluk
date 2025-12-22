@@ -637,7 +637,7 @@ const DashboardModule = ({ user, students, setStudents, setSelectedStudentId, on
   );
 };
 
-//// 1. DERS YÖNETİMİ (Sözdizimi Hatası Giderildi)
+// 1. DERS YÖNETİMİ (NİHAİ: Mobilde Yazılı Daireler + Akıllı Kaydırma)
 const LessonModule = ({ student, curriculum, setCurriculum, onUpdateStudent, user, allStudents }) => {
   const activeCurriculum = student.curriculum || curriculum;
   const [selectedCourseId, setSelectedCourseId] = useState(activeCurriculum[0]?.id || null);
@@ -649,15 +649,83 @@ const LessonModule = ({ student, curriculum, setCurriculum, onUpdateStudent, use
   const colors = useThemeColors();
   
   if (user.role === 'student') return <div className={`${colors.text} text-center mt-20`}>Bu alana erişim yetkiniz yok.</div>;
-
+  
   const selectedCourse = activeCurriculum.find(c => c.id === selectedCourseId);
+  const courseResources = student.resources ? student.resources.filter(r => r.courseId === selectedCourseId) : [];
 
-  const toggleStatus = (topicId, type) => { const currentStatus = student.lessons[topicId] || {}; const newStatus = { ...currentStatus, [type]: !currentStatus[type] }; onUpdateStudent({ ...student, lessons: { ...student.lessons, [topicId]: newStatus } }); };
-  const handleAddItem = () => { let updatedCurriculum = [...activeCurriculum]; if (showAddModal === 'course') { if(!newItem.name) return; const newCourse = { id: Date.now().toString(), name: newItem.name, units: [] }; updatedCurriculum = [...updatedCurriculum, newCourse]; setSelectedCourseId(newCourse.id); } else if (showAddModal === 'unit' || showAddModal === 'topic') { const names = bulkText ? bulkText.split('\n').filter(n => n.trim()) : (newItem.name ? [newItem.name] : []); if(names.length === 0) return; updatedCurriculum = updatedCurriculum.map(c => { if (c.id === selectedCourseId) { if (showAddModal === 'unit') { const newUnits = names.map(name => ({ id: Math.random().toString(36).substr(2, 9), name, topics: [] })); return { ...c, units: [...c.units, ...newUnits] }; } else { return { ...c, units: c.units.map(u => u.id === newItem.parentId ? { ...u, topics: [...u.topics, ...names] } : u) }; } } return c; }); } onUpdateStudent({ ...student, curriculum: updatedCurriculum }); setShowAddModal(null); setNewItem({ name: "", parentId: "" }); setBulkText(""); };
-  const handleMove = (e, type, index, direction, parentId = null, subParentId = null) => { e.stopPropagation(); let updated = [...activeCurriculum]; const swap = (arr, i, dir) => { if (dir === 'up' && i > 0) { [arr[i], arr[i - 1]] = [arr[i - 1], arr[i]]; } else if (dir === 'down' && i < arr.length - 1) { [arr[i], arr[i + 1]] = [arr[i + 1], arr[i]]; } return arr; }; if (type === 'course') { updated = swap(updated, index, direction); } else if (type === 'unit') { const courseIndex = updated.findIndex(c => c.id === selectedCourseId); if (courseIndex > -1) { let units = [...updated[courseIndex].units]; units = swap(units, index, direction); updated[courseIndex] = { ...updated[courseIndex], units }; } } else if (type === 'topic') { const courseIndex = updated.findIndex(c => c.id === selectedCourseId); if (courseIndex > -1) { const unitIndex = updated[courseIndex].units.findIndex(u => u.id === parentId); if (unitIndex > -1) { let topics = [...updated[courseIndex].units[unitIndex].topics]; topics = swap(topics, index, direction); const newUnits = [...updated[courseIndex].units]; newUnits[unitIndex] = { ...newUnits[unitIndex], topics }; updated[courseIndex] = { ...updated[courseIndex], units: newUnits }; } } } onUpdateStudent({ ...student, curriculum: updated }); };
+  const toggleStatus = (topicId, type) => { 
+      const currentStatus = student.lessons[topicId] || {}; 
+      const newStatus = { ...currentStatus, [type]: !currentStatus[type] }; 
+      onUpdateStudent({ ...student, lessons: { ...student.lessons, [topicId]: newStatus } }); 
+  };
+
+  const toggleResourceTopic = (resourceId, uniqueTopicKey) => {
+      const resource = student.resources.find(r => r.id === resourceId);
+      if (!resource) return;
+
+      const isCompleted = resource.completedTopics?.includes(uniqueTopicKey);
+      let newCompleted = resource.completedTopics || [];
+      
+      if (isCompleted) {
+          newCompleted = newCompleted.filter(t => t !== uniqueTopicKey);
+      } else {
+          newCompleted = [...newCompleted, uniqueTopicKey];
+      }
+
+      let totalTopics = 0;
+      selectedCourse.units.forEach(u => totalTopics += u.topics.length);
+      const progress = totalTopics > 0 ? Math.round((newCompleted.length / totalTopics) * 100) : 0;
+
+      const updatedResource = { ...resource, completedTopics: newCompleted, progress };
+      const updatedResourcesList = student.resources.map(r => r.id === resourceId ? updatedResource : r);
+      
+      onUpdateStudent({ ...student, resources: updatedResourcesList });
+  };
+
+  const handleAddItem = () => { 
+      let updatedCurriculum = [...activeCurriculum]; 
+      if (showAddModal === 'course') { 
+          if(!newItem.name) return;
+          const newCourse = { id: Date.now().toString(), name: newItem.name, units: [] }; 
+          updatedCurriculum = [...updatedCurriculum, newCourse]; 
+          setSelectedCourseId(newCourse.id);
+      } else if (showAddModal === 'unit' || showAddModal === 'topic') { 
+          const names = bulkText ? bulkText.split('\n').filter(n => n.trim()) : (newItem.name ? [newItem.name] : []); 
+          if(names.length === 0) return;
+          updatedCurriculum = updatedCurriculum.map(c => { 
+              if (c.id === selectedCourseId) { 
+                  if (showAddModal === 'unit') { 
+                      const newUnits = names.map(name => ({ id: Math.random().toString(36).substr(2, 9), name, topics: [] })); 
+                      return { ...c, units: [...c.units, ...newUnits] }; 
+                  } else { 
+                      return { ...c, units: c.units.map(u => u.id === newItem.parentId ? { ...u, topics: [...u.topics, ...names] } : u) }; 
+                  } 
+              } 
+              return c; 
+          });
+      } 
+      onUpdateStudent({ ...student, curriculum: updatedCurriculum }); 
+      setShowAddModal(null); setNewItem({ name: "", parentId: "" }); setBulkText(""); 
+  };
+
+  const handleMove = (e, type, index, direction, parentId = null, subParentId = null) => { e.stopPropagation(); let updated = [...activeCurriculum];
+      const swap = (arr, i, dir) => { if (dir === 'up' && i > 0) { [arr[i], arr[i - 1]] = [arr[i - 1], arr[i]]; } else if (dir === 'down' && i < arr.length - 1) { [arr[i], arr[i + 1]] = [arr[i + 1], arr[i]]; } return arr; }; 
+      if (type === 'course') { updated = swap(updated, index, direction); } 
+      else if (type === 'unit') { const courseIndex = updated.findIndex(c => c.id === selectedCourseId); if (courseIndex > -1) { let units = [...updated[courseIndex].units]; units = swap(units, index, direction); updated[courseIndex] = { ...updated[courseIndex], units }; } } 
+      else if (type === 'topic') { const courseIndex = updated.findIndex(c => c.id === selectedCourseId); if (courseIndex > -1) { const unitIndex = updated[courseIndex].units.findIndex(u => u.id === parentId); if (unitIndex > -1) { let topics = [...updated[courseIndex].units[unitIndex].topics]; topics = swap(topics, index, direction); const newUnits = [...updated[courseIndex].units]; newUnits[unitIndex] = { ...newUnits[unitIndex], topics }; updated[courseIndex] = { ...updated[courseIndex], units: newUnits }; } } } 
+      onUpdateStudent({ ...student, curriculum: updated }); 
+  };
+  
   const requestDelete = (e, type, id, parentId = null) => { e.stopPropagation(); e.preventDefault(); setDeleteConfirm({ type, id, parentId }); };
   const confirmDelete = () => { if (!deleteConfirm) return; const { type, id, parentId } = deleteConfirm; let updatedCurriculum = [...activeCurriculum]; if (type === 'course') { updatedCurriculum = updatedCurriculum.filter(c => c.id !== id); if(selectedCourseId === id) setSelectedCourseId(updatedCurriculum[0]?.id || null); } else if (type === 'unit') { updatedCurriculum = updatedCurriculum.map(c => c.id === selectedCourseId ? { ...c, units: c.units.filter(u => u.id !== id) } : c); } else if (type === 'topic') { updatedCurriculum = updatedCurriculum.map(c => c.id === selectedCourseId ? { ...c, units: c.units.map(u => u.id === parentId ? { ...u, topics: u.topics.filter(t => t !== id) } : u) } : c); } onUpdateStudent({ ...student, curriculum: updatedCurriculum }); setDeleteConfirm(null); };
-  const LABELS = [{ id: 'konu', label: 'Konu', color: 'bg-emerald-500' }, { id: 'soru', label: 'Soru', color: 'bg-blue-500' }, { id: 't1', label: '1. Tekrar', color: 'bg-purple-500' }, { id: 't2', label: '2. Tekrar', color: 'bg-pink-500' }, { id: 't3', label: '3. Tekrar', color: 'bg-orange-500' }];
+  
+  const LABELS = [
+      { id: 'konu', label: 'Konu', color: 'bg-emerald-500' }, 
+      { id: 'soru', label: 'Soru', color: 'bg-blue-500' }, 
+      { id: 't1', label: '1. Tekrar', color: 'bg-purple-500' }, 
+      { id: 't2', label: '2. Tekrar', color: 'bg-pink-500' }, 
+      { id: 't3', label: '3. Tekrar', color: 'bg-orange-500' }
+  ];
 
   const handleCopyFromStudent = (targetStudentId) => {
       if(!window.confirm("Bu işlem mevcut öğrencinin ders programını silecek ve seçilen öğrencininkiyle değiştirecektir. Emin misiniz?")) return;
@@ -669,16 +737,163 @@ const LessonModule = ({ student, curriculum, setCurriculum, onUpdateStudent, use
       } else { alert("Seçilen öğrencinin özel bir ders programı yok."); }
   };
 
+  // SÜTUN GENİŞLİKLERİ
+  const COL_WIDTHS = {
+      // Sol Sütun (Konu): Mobilde 140px, PC'de 250px
+      TOPIC: 'w-[140px] md:w-[250px]', 
+      // Orta Sütun (Durum): Mobilde 220px (Sığması için), PC'de 320px
+      STATUS: 'w-[220px] md:w-[320px]',             
+      // Sağ Sütun (Kaynak): Her biri 96px
+      RESOURCE: 'w-24' 
+  };
+
   return (
     <div className="flex flex-col lg:flex-row gap-6 h-auto lg:h-[calc(100vh-140px)] animate-fade-in">
+        {/* SOL PANEL: DERSLER */}
         <div className="w-full lg:w-1/4 flex flex-col gap-2 max-h-60 lg:max-h-full overflow-y-auto pr-2 custom-scrollbar">
             <div className="flex justify-between items-center mb-2"><h3 className="text-orange-500 font-bold">Dersler</h3><div className="flex gap-1"><Button size="small" variant="secondary" icon={RefreshCw} onClick={() => setShowCopyModal(true)} title="Kopyala" /><Button size="small" icon={Plus} onClick={() => setShowAddModal('course')} /></div></div>
             {activeCurriculum.map((c, idx) => (<div key={c.id} className="flex gap-1 items-center"><button onClick={() => setSelectedCourseId(c.id)} className={`flex-1 p-3 rounded-lg text-left transition-all truncate ${selectedCourseId === c.id ? `bg-slate-800 border-orange-500 text-white border` : `${colors.bgCard} ${colors.border} ${colors.textSec}`}`}>{c.name}</button><div className="flex flex-col gap-1"><button onClick={(e) => handleMove(e, 'course', idx, 'up')} disabled={idx === 0} className={`p-1 ${colors.bgCard} border ${colors.border} rounded text-slate-500 hover:text-orange-500 disabled:opacity-30`}><ArrowUp size={10}/></button><button onClick={(e) => handleMove(e, 'course', idx, 'down')} disabled={idx === activeCurriculum.length - 1} className={`p-1 ${colors.bgCard} border ${colors.border} rounded text-slate-500 hover:text-orange-500 disabled:opacity-30`}><ArrowDown size={10}/></button></div><button onClick={(e) => requestDelete(e, 'course', c.id)} className={`p-3 ${colors.bgCard} ${colors.border} border rounded-lg text-slate-500 hover:text-red-500 hover:border-red-500/50 group h-full flex items-center`}><Trash2 size={16} className="group-hover:text-red-500"/></button></div>))}
         </div>
-        <div className={`flex-1 ${colors.bgCardTransparent} border ${colors.border} rounded-xl p-6 overflow-y-auto custom-scrollbar`}>
-             {selectedCourse ? ( <> <div className={`flex flex-col md:flex-row justify-between items-start md:items-center mb-6 pb-4 border-b ${colors.border} gap-4`}> <h2 className={`text-xl font-bold ${colors.text}`}>{selectedCourse.name}</h2> <div className="flex gap-3"> <Button size="small" variant="secondary" icon={Plus} onClick={() => setShowAddModal('unit')}>Ünite Ekle</Button> <Button size="small" variant="secondary" icon={Plus} onClick={() => { setNewItem({...newItem, parentId: selectedCourse.units[0]?.id}); setShowAddModal('topic'); }}>Konu Ekle</Button> </div> </div>
-                 {selectedCourse.units.map((unit, uIdx) => ( <div key={unit.id} className={`mb-6 ${colors.bgCard} border ${colors.border} rounded-lg overflow-hidden ${colors.shadow}`}> <div className={`${colors.isDark ? 'bg-slate-800' : 'bg-slate-100'} p-3 flex justify-between items-center`}> <h4 className="text-orange-500 font-bold">{unit.name}</h4> <div className="flex items-center gap-2"> <button onClick={(e) => handleMove(e, 'unit', uIdx, 'up')} disabled={uIdx === 0} className={`p-1 hover:bg-slate-700 rounded text-slate-500 hover:text-orange-500 disabled:opacity-30`}><ArrowUp size={14}/></button> <button onClick={(e) => handleMove(e, 'unit', uIdx, 'down')} disabled={uIdx === selectedCourse.units.length - 1} className={`p-1 hover:bg-slate-700 rounded text-slate-500 hover:text-orange-500 disabled:opacity-30`}><ArrowDown size={14}/></button> <div className="w-px h-4 bg-slate-500/30 mx-1"></div> <button onClick={(e) => requestDelete(e, 'unit', unit.id)} className="text-slate-500 hover:text-red-500 p-2"><Trash2 size={14}/></button> </div> </div> <div className={`divide-y ${colors.divider}`}> {unit.topics.map((topic, tIdx) => { const key = `${selectedCourse.id}-${unit.id}-${tIdx}`; const status = student.lessons[key] || {}; return ( <div key={tIdx} className={`flex flex-col md:flex-row justify-between items-start md:items-center p-3 ${colors.hoverBg} transition-colors gap-2 group`}> <div className="flex items-center gap-2"> <div className="flex flex-col opacity-0 group-hover:opacity-100 transition-opacity"> <button onClick={(e) => handleMove(e, 'topic', tIdx, 'up', unit.id)} disabled={tIdx === 0} className="text-slate-400 hover:text-orange-500 disabled:opacity-0"><ArrowUp size={10}/></button> <button onClick={(e) => handleMove(e, 'topic', tIdx, 'down', unit.id)} disabled={tIdx === unit.topics.length - 1} className="text-slate-400 hover:text-orange-500 disabled:opacity-0"><ArrowDown size={10}/></button> </div> <span className={`${colors.text} text-sm font-medium`}>{topic}</span> </div> <div className="flex items-center gap-4 w-full md:w-auto justify-between md:justify-end"> <div className="flex gap-3 mr-4"> {LABELS.map(lbl => ( <div key={lbl.id} className="flex flex-col items-center gap-1 cursor-pointer group/lbl" onClick={() => toggleStatus(key, lbl.id)}> <div className={`w-5 h-5 rounded-full border border-slate-600 flex items-center justify-center transition-all ${status[lbl.id] ? `${lbl.color} border-transparent` : `hover:border-slate-400 ${colors.isDark ? 'bg-slate-800' : 'bg-white'}`}`}> {status[lbl.id] && <Check size={10} className="text-white"/>} </div> <span className={`text-[9px] ${colors.textSec} font-medium whitespace-nowrap group-hover/lbl:${colors.text} transition-colors`}>{lbl.label}</span> </div> ))} </div> <button onClick={(e) => requestDelete(e, 'topic', topic, unit.id)} className="text-slate-600 hover:text-red-500 p-2"><Trash2 size={14}/></button> </div> </div> ) })} </div> </div> ))} </>) : <div className={`${colors.textSec} text-center py-20`}>Ders seçiniz veya ekleyiniz.</div>}
+
+        {/* SAĞ PANEL: İÇERİK */}
+        <div className={`flex-1 ${colors.bgCardTransparent} border ${colors.border} rounded-xl overflow-hidden flex flex-col shadow-sm relative`}>
+            {selectedCourse ? ( 
+            <> 
+                <div className={`p-4 md:p-6 pb-2 border-b ${colors.border} flex flex-col md:flex-row justify-between items-start md:items-center bg-opacity-50 gap-4`}>
+                    <h2 className={`text-xl font-bold ${colors.text}`}>{selectedCourse.name}</h2>
+                    <div className="flex gap-3 w-full md:w-auto">
+                        <Button size="small" variant="secondary" icon={Plus} className="flex-1 md:flex-none" onClick={() => setShowAddModal('unit')}>Ünite Ekle</Button>
+                        <Button size="small" variant="secondary" icon={Plus} className="flex-1 md:flex-none" onClick={() => { setNewItem({...newItem, parentId: selectedCourse.units[0]?.id}); setShowAddModal('topic'); }}>Konu Ekle</Button>
+                    </div>
+                </div>
+
+                {/* --- ANA TABLO ALANI --- */}
+                <div className="overflow-auto custom-scrollbar flex-1 w-full">
+                    <div className="min-w-max">
+                        
+                        {/* 1. BAŞLIK SATIRI (STICKY TOP) */}
+                        <div className={`flex items-stretch border-b border-slate-700/50 sticky top-0 z-30 ${colors.isDark ? 'bg-slate-900' : 'bg-white'}`}>
+                            
+                            {/* SOL: KONU (STICKY LEFT) */}
+                            <div className={`sticky left-0 z-40 ${COL_WIDTHS.TOPIC} p-3 text-orange-500 font-bold text-sm flex items-center ${colors.isDark ? 'bg-slate-900' : 'bg-white'} border-r border-slate-800/50`}>
+                                Konu Başlıkları
+                            </div>
+
+                            {/* ORTA: DURUM (STICKY ON PC, NORMAL ON MOBILE) */}
+                            {/* PC: 250px'den başlar (sticky) */}
+                            <div className={`hidden md:flex sticky z-40 ${COL_WIDTHS.STATUS} p-3 items-center justify-center text-center text-emerald-500 font-bold text-sm ${colors.isDark ? 'bg-slate-900' : 'bg-white'} border-r border-slate-800/50`} style={{ left: '250px' }}>
+                                Çalışma Durumu
+                            </div>
+                            {/* Mobile: Akışta (sticky değil, sola kayabilir) */}
+                            <div className={`md:hidden ${COL_WIDTHS.STATUS} p-3 flex items-center justify-center text-center text-emerald-500 font-bold text-sm ${colors.isDark ? 'bg-slate-900' : 'bg-white'} border-r border-slate-800/50`}>
+                                Durum
+                            </div>
+
+                            {/* SAĞ: KAYNAK BAŞLIKLARI */}
+                            <div className="flex items-center px-2">
+                                {courseResources.length > 0 ? courseResources.map(r => (
+                                    <div key={r.id} className={`${COL_WIDTHS.RESOURCE} flex justify-center py-2 relative group`}>
+                                        <div className="absolute top-full mt-1 hidden group-hover:block bg-slate-800 border border-slate-700 text-white text-[10px] p-2 rounded z-50 whitespace-nowrap shadow-xl">
+                                            {r.name}
+                                        </div>
+                                        <span className={`text-[10px] font-bold text-slate-400 cursor-help uppercase truncate px-1 w-full text-center`} title={r.name}>
+                                            {r.name}
+                                        </span>
+                                    </div>
+                                )) : (
+                                    <div className="text-xs italic text-slate-500 p-3">Kaynak Yok</div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* 2. İÇERİK SATIRLARI */}
+                        {selectedCourse.units.map((unit, uIdx) => (
+                            <div key={unit.id} className="contents">
+                                {/* ÜNİTE AYIRACI */}
+                                <div className={`sticky left-0 right-0 z-20 ${colors.isDark ? 'bg-slate-800/90 backdrop-blur-sm' : 'bg-slate-200'} p-2 px-4 border-b border-slate-700/30 flex justify-between items-center`}>
+                                    <h4 className="text-orange-500 font-bold text-sm">{unit.name}</h4>
+                                    <div className="flex items-center gap-2 opacity-70 hover:opacity-100 transition-opacity">
+                                        <button onClick={(e) => handleMove(e, 'unit', uIdx, 'up')} disabled={uIdx === 0} className="text-slate-400 hover:text-white disabled:hidden"><ArrowUp size={12}/></button>
+                                        <button onClick={(e) => handleMove(e, 'unit', uIdx, 'down')} disabled={uIdx === selectedCourse.units.length - 1} className="text-slate-400 hover:text-white disabled:hidden"><ArrowDown size={12}/></button>
+                                        <button onClick={(e) => requestDelete(e, 'unit', unit.id)} className="text-slate-400 hover:text-red-500 ml-2"><Trash2 size={12}/></button>
+                                    </div>
+                                </div>
+
+                                {/* KONU SATIRLARI */}
+                                {unit.topics.map((topic, tIdx) => {
+                                    const key = `${selectedCourse.id}-${unit.id}-${tIdx}`;
+                                    const status = student.lessons[key] || {};
+                                    return (
+                                        <div key={tIdx} className={`flex items-stretch border-b border-slate-800/30 hover:bg-slate-800/20 transition-colors group min-h-[50px]`}>
+                                            
+                                            {/* SOL SÜTUN: KONU ADI (STICKY) */}
+                                            <div className={`sticky left-0 z-10 ${COL_WIDTHS.TOPIC} p-3 flex items-center gap-2 ${colors.isDark ? 'bg-slate-900' : 'bg-white'} border-r border-slate-800/30`}>
+                                                <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity w-3 shrink-0">
+                                                    <button onClick={(e) => handleMove(e, 'topic', tIdx, 'up', unit.id)} disabled={tIdx === 0} className="text-slate-500 hover:text-orange-500 disabled:hidden"><ArrowUp size={10}/></button>
+                                                    <button onClick={(e) => handleMove(e, 'topic', tIdx, 'down', unit.id)} disabled={tIdx === unit.topics.length - 1} className="text-slate-500 hover:text-orange-500 disabled:hidden"><ArrowDown size={10}/></button>
+                                                </div>
+                                                <span className={`${colors.text} text-sm font-medium whitespace-normal leading-snug`}>{topic}</span>
+                                            </div>
+
+                                            {/* ORTA SÜTUN: DURUM (STICKY ON PC, NORMAL ON MOBILE) */}
+                                            {/* PC Görünümü (Sticky 250px) */}
+                                            <div className={`hidden md:flex sticky z-10 ${COL_WIDTHS.STATUS} p-2 items-center justify-center gap-4 shrink-0 ${colors.isDark ? 'bg-slate-900' : 'bg-white'} border-r border-slate-800/30`} style={{ left: '250px' }}>
+                                                {LABELS.map(lbl => (
+                                                    <div key={lbl.id} className="flex flex-col items-center gap-1 cursor-pointer group/lbl shrink-0" onClick={() => toggleStatus(key, lbl.id)}>
+                                                        <div className={`w-5 h-5 md:w-6 md:h-6 rounded-full border border-slate-600 flex items-center justify-center transition-all ${status[lbl.id] ? `${lbl.color} border-transparent shadow` : `hover:border-slate-500 ${colors.isDark ? 'bg-slate-800' : 'bg-white'}`}`}>
+                                                            {status[lbl.id] && <Check size={12} className="text-white"/>}
+                                                        </div>
+                                                        <span className={`text-[8px] md:text-[9px] ${colors.textSec} font-medium group-hover/lbl:${colors.text} transition-colors`}>{lbl.label}</span>
+                                                    </div>
+                                                ))}
+                                                <button onClick={(e) => requestDelete(e, 'topic', topic, unit.id)} className="text-slate-600 hover:text-red-500 ml-2 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={14}/></button>
+                                            </div>
+                                            
+                                            {/* Mobil Görünüm (YAZILAR EKLENDİ & AKIŞTA) */}
+                                            <div className={`md:hidden ${COL_WIDTHS.STATUS} p-2 flex items-center justify-center gap-2 shrink-0 ${colors.isDark ? 'bg-slate-900' : 'bg-white'} border-r border-slate-800/30`}>
+                                                {LABELS.map(lbl => (
+                                                    <div key={lbl.id} className="flex flex-col items-center gap-1 cursor-pointer w-8" onClick={() => toggleStatus(key, lbl.id)}>
+                                                        <div className={`w-5 h-5 rounded-full border border-slate-600 flex items-center justify-center ${status[lbl.id] ? `${lbl.color} border-transparent` : ''}`}>
+                                                            {status[lbl.id] && <Check size={10} className="text-white"/>}
+                                                        </div>
+                                                        {/* MOBİL İÇİN YAZI (ARTIK VAR) */}
+                                                        <span className={`text-[8px] ${colors.textSec} text-center leading-tight`}>{lbl.label}</span>
+                                                    </div>
+                                                ))}
+                                                <button onClick={(e) => requestDelete(e, 'topic', topic, unit.id)} className="text-slate-600 hover:text-red-500 ml-1"><Trash2 size={14}/></button>
+                                            </div>
+
+                                            {/* SAĞ SÜTUN: KAYNAK KUTUCUKLARI (HİZALI) */}
+                                            <div className="flex items-center px-2">
+                                                {courseResources.length > 0 ? courseResources.map(r => {
+                                                    const uniqueKey = `${unit.id}-${tIdx}`;
+                                                    const isChecked = r.completedTopics?.includes(uniqueKey);
+                                                    return (
+                                                        <div key={r.id} className={`${COL_WIDTHS.RESOURCE} flex justify-center shrink-0`}>
+                                                            <div 
+                                                                onClick={() => toggleResourceTopic(r.id, uniqueKey)}
+                                                                className={`w-5 h-5 rounded border cursor-pointer transition-all duration-200 flex items-center justify-center ${isChecked ? 'bg-orange-600 border-orange-600 shadow' : 'border-slate-600 hover:border-orange-400 bg-slate-800/50'}`}
+                                                            >
+                                                                {isChecked && <Check size={12} className="text-white"/>}
+                                                            </div>
+                                                        </div>
+                                                    )
+                                                }) : (
+                                                    <div className="w-full"></div>
+                                                )}
+                                            </div>
+
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </>
+            ) : <div className={`${colors.textSec} text-center py-20`}>Ders seçiniz veya ekleyiniz.</div>}
         </div>
+        
         {showAddModal && (<Modal title={showAddModal === 'course' ? 'Yeni Ders' : showAddModal === 'unit' ? 'Yeni Ünite' : 'Yeni Konu'} onClose={() => setShowAddModal(null)}> <div className="space-y-4"> {showAddModal === 'topic' && ( <div> <label className={`block text-sm ${colors.textSec} mb-1`}>Hangi Üniteye?</label> <select className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg p-3 ${colors.text}`} value={newItem.parentId} onChange={e => setNewItem({...newItem, parentId: e.target.value})}> <option value="">Seçiniz</option> {selectedCourse?.units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)} </select> </div> )} {showAddModal === 'course' ? ( <Input label="Ders Adı" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} /> ) : ( <div> <label className={`block text-xs font-medium ${colors.textSec} mb-2 uppercase`}>{showAddModal === 'unit' ? 'Ünite İsimleri' : 'Konu İsimleri'} (Her satıra bir tane)</label> <textarea className={`w-full ${colors.inputBg} border ${colors.inputBorder} rounded-lg p-3 ${colors.text} h-32 focus:border-orange-500 outline-none`} value={bulkText} onChange={e => setBulkText(e.target.value)}></textarea> </div> )} <Button onClick={handleAddItem} className="w-full mt-4">Kaydet</Button> </div> </Modal>)}
         {showCopyModal && (<Modal title="Müfredat Kopyala" onClose={() => setShowCopyModal(false)}> <div className="space-y-4"> <div className="bg-red-500/10 p-4 rounded text-red-500 text-sm"> Dikkat: Bu işlem, şu anki öğrencinin tüm ders yapısını silecek ve seçtiğiniz öğrencinin ders yapısını (dersler, üniteler, konular) buraya aktaracaktır. </div> <div className="max-h-60 overflow-y-auto space-y-2"> {allStudents .filter(s => s.id !== student.id) .map(s => ( <button key={s.id} onClick={() => handleCopyFromStudent(s.id)} className={`w-full text-left p-3 rounded border ${colors.border} ${colors.hoverBg} flex justify-between items-center`}> <span className={colors.text}>{s.name}</span> <span className={`text-xs ${colors.textSec}`}>{s.grade}</span> </button> )) } {allStudents.filter(s => s.id !== student.id).length === 0 && <div className={`text-center ${colors.textSec} py-2`}>Kopyalanacak başka öğrenciniz yok.</div>} </div> </div> </Modal>)}
         <DeleteConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={confirmDelete} />
